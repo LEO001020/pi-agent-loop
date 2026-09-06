@@ -1,0 +1,589 @@
+/* Color skins on top of data-theme.
+   Each pack has a distinct material identity (not just a swapped accent).
+   default skin = no data-skin attribute (tokens.css only).
+   Selecting a skin never forces light/dark — both shells are first-class. */
+
+/* ── Custom wallpaper (user upload: image / gif / video) ──
+ * Media is rendered by a React layer (.app-wallpaper-media) so video & gif
+ * actually play; scrim on ::after; panes go translucent.
+ *
+ * Scrim strength (Settings slider) writes:
+ *   --wallpaper-scrim-opacity   0–1  (full-window ::after veil)
+ *   --wallpaper-mix-sidebar|main|aside|settings  (pane tint %)
+ *   --wallpaper-sidebar-blur
+ * At 0% every dimming fill is fully transparent so the wallpaper is clear;
+ * text/buttons keep their own solid colors. Settings cards stay solid. */
+html[data-wallpaper="1"] .app-shell {
+  background: transparent !important;
+}
+
+html[data-wallpaper="1"] .app-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--wallpaper-scrim-opacity, 1);
+  /* Left-weighted scrim so chrome stays readable (Dream Skin safe-area left). */
+  background: linear-gradient(
+    105deg,
+    color-mix(in srgb, var(--bg-app) 88%, transparent) 0%,
+    color-mix(in srgb, var(--bg-app) 62%, transparent) 42%,
+    color-mix(in srgb, var(--bg-app) 28%, transparent) 78%,
+    color-mix(in srgb, var(--bg-app) 12%, transparent) 100%
+  );
+}
+
+/* React media layer — behind the scrim, behind chrome. */
+.app-wallpaper-media {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app-wallpaper-media__el {
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* render-time cover-crop to window — source stays intact */
+  display: block;
+}
+
+/* Lift real chrome above the media + scrim.
+ * Excludes .window-controls (must keep position: fixed; right:0; z:10040 —
+ * otherwise the buttons jump to the left and the drag strip is clobbered),
+ * the media layer itself (already positioned/z-indexed above), and the
+ * setup gate — the gate is position:fixed and must stay full-viewport;
+ * forcing position:relative here collapsed it to its content height and
+ * left a solid band over the top of the wallpaper on boot. */
+html[data-wallpaper="1"] .app-shell
+  > *:not(.window-controls):not(.app-wallpaper-media):not(.setup-gate) {
+  position: relative;
+  z-index: 2;
+}
+
+html[data-wallpaper="1"] .workbench {
+  background: transparent !important;
+}
+
+/* Pane fills scale with scrim: 0% = fully clear wallpaper under chrome.
+ * !important beats platform-win solid fills and mac light #ffffff rules. */
+html[data-wallpaper="1"] .sidebar {
+  background: color-mix(
+    in srgb,
+    var(--bg-sidebar-solid, var(--bg-sidebar))
+      var(--wallpaper-mix-sidebar, 58%),
+    transparent
+  ) !important;
+  backdrop-filter: blur(var(--wallpaper-sidebar-blur, 22px)) saturate(1.25);
+  -webkit-backdrop-filter: blur(var(--wallpaper-sidebar-blur, 22px))
+    saturate(1.25);
+}
+
+html[data-wallpaper="1"] .main {
+  background: color-mix(
+    in srgb,
+    var(--bg-main) var(--wallpaper-mix-main, 70%),
+    transparent
+  ) !important;
+  /* Drop soft lift shadow that reads as a gray edge over clear wallpaper. */
+  box-shadow: none !important;
+}
+
+html[data-wallpaper="1"] .aside {
+  background: color-mix(
+    in srgb,
+    var(--bg-aside) var(--wallpaper-mix-aside, 70%),
+    transparent
+  ) !important;
+}
+
+html[data-wallpaper="1"] .settings-page {
+  background: color-mix(
+    in srgb,
+    var(--bg-main) var(--wallpaper-mix-settings, 78%),
+    transparent
+  ) !important;
+}
+
+/*
+ * Boot / setup gate: stay fully transparent over the wallpaper so the image
+ * shows edge-to-edge (no opaque band). The brand mark keeps its contrast from
+ * the full-window app-shell scrim that already sits beneath the gate.
+ */
+html[data-wallpaper="1"] .setup-gate {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/*
+ * Settings chrome: nav + content paint solid in app.css and would fully hide
+ * the wallpaper even when the outer page / ::after scrim is at 0%.
+ * Scale them with the same mix tokens.
+ */
+html[data-wallpaper="1"] .settings-page__nav,
+html[data-wallpaper="1"] .platform-win .settings-page__nav,
+html[data-wallpaper="1"] .platform-other .settings-page__nav,
+html[data-wallpaper="1"] .platform-mac .settings-page__nav {
+  background: color-mix(
+    in srgb,
+    var(--bg-sidebar-solid, var(--bg-sidebar))
+      var(--wallpaper-mix-sidebar, 58%),
+    transparent
+  ) !important;
+  backdrop-filter: blur(var(--wallpaper-sidebar-blur, 22px)) saturate(1.25);
+  -webkit-backdrop-filter: blur(var(--wallpaper-sidebar-blur, 22px))
+    saturate(1.25);
+}
+
+html[data-wallpaper="1"] .settings-page__content,
+html[data-wallpaper="1"].platform-mac .settings-page__content,
+html[data-wallpaper="1"].platform-mac[data-theme="light"] .settings-page__content {
+  background: color-mix(
+    in srgb,
+    var(--bg-main) var(--wallpaper-mix-settings, 78%),
+    transparent
+  ) !important;
+  box-shadow: none !important;
+}
+
+/* mac light workbench main is forced #ffffff — keep it tied to scrim too. */
+html[data-wallpaper="1"].platform-mac[data-theme="light"] .main,
+html[data-wallpaper="1"].platform-mac[data-theme="light"] .aside {
+  background: color-mix(
+    in srgb,
+    #ffffff var(--wallpaper-mix-main, 70%),
+    transparent
+  ) !important;
+}
+
+/*
+ * Hard clear at 0% scrim — bypass color-mix residuals / platform solid fills
+ * so the wallpaper is actually unobstructed under chrome.
+ */
+html[data-wallpaper="1"][data-wallpaper-clear="1"] .app-shell::after {
+  opacity: 0 !important;
+}
+
+html[data-wallpaper="1"][data-wallpaper-clear="1"] .sidebar,
+html[data-wallpaper="1"][data-wallpaper-clear="1"] .main,
+html[data-wallpaper="1"][data-wallpaper-clear="1"] .aside,
+html[data-wallpaper="1"][data-wallpaper-clear="1"] .settings-page,
+html[data-wallpaper="1"][data-wallpaper-clear="1"] .setup-gate,
+html[data-wallpaper="1"][data-wallpaper-clear="1"] .settings-page__nav,
+html[data-wallpaper="1"][data-wallpaper-clear="1"] .settings-page__content,
+html[data-wallpaper="1"][data-wallpaper-clear="1"].platform-mac[data-theme="light"] .main,
+html[data-wallpaper="1"][data-wallpaper-clear="1"].platform-mac[data-theme="light"] .aside,
+html[data-wallpaper="1"][data-wallpaper-clear="1"].platform-mac[data-theme="light"] .settings-page__content {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ROSE — “Salon blush”
+ * Velvet wine night / powder-mauve day. Accent is carmine, not neon pink.
+ * Signature: warm mauve glass + rose focus ring.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"][data-skin="rose"] {
+  --accent: #e06b7c;
+  --accent-muted: rgba(224, 107, 124, 0.18);
+  --accent-hover: #f08a98;
+  --accent-fg: #140a0c;
+  --border-focus: rgba(224, 107, 124, 0.55);
+
+  --bg-app: #120c10;
+  --bg-main: #1a1216;
+  --bg-sidebar-solid: #161014;
+  --bg-aside: #161014;
+  --bg-elevated: #24181e;
+  --bg-input: #181014;
+  --bg-code: #0e0a0c;
+  --bg-card: #24181e;
+  --bg-user-bubble: #2e1e24;
+  --bg-sidebar: rgba(22, 16, 20, 0.48);
+
+  --bg-hover: rgba(224, 107, 124, 0.08);
+  --bg-active: rgba(224, 107, 124, 0.14);
+
+  --border-subtle: rgba(232, 180, 190, 0.1);
+  --border-strong: rgba(232, 180, 190, 0.2);
+
+  --text-primary: rgba(255, 236, 240, 0.94);
+  --text-secondary: rgba(220, 170, 180, 0.72);
+  --text-tertiary: rgba(200, 150, 160, 0.45);
+
+  --glass-surface: rgba(40, 24, 30, 0.78);
+  --glass-surface-solid: rgba(46, 28, 34, 0.96);
+  --glass-border: rgba(232, 180, 190, 0.14);
+
+  --danger: #f07178;
+  --danger-muted: rgba(240, 113, 120, 0.16);
+  --warning: #e8a060;
+  --warning-muted: rgba(232, 160, 96, 0.14);
+}
+
+[data-theme="light"][data-skin="rose"] {
+  --accent: #c43d55;
+  --accent-muted: rgba(196, 61, 85, 0.12);
+  --accent-hover: #a83248;
+  --accent-fg: #ffffff;
+  --border-focus: rgba(196, 61, 85, 0.45);
+
+  --bg-app: #f6eef1;
+  --bg-main: #fffbfc;
+  --bg-sidebar-solid: #f0e4e8;
+  --bg-aside: #fffbfc;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-code: #f3e8ec;
+  --bg-card: #ffffff;
+  --bg-user-bubble: #f3e0e6;
+  --bg-sidebar: rgba(255, 245, 248, 0.55);
+
+  --bg-hover: rgba(196, 61, 85, 0.06);
+  --bg-active: rgba(196, 61, 85, 0.1);
+
+  --border-subtle: rgba(140, 80, 95, 0.1);
+  --border-strong: rgba(140, 80, 95, 0.16);
+
+  --text-primary: rgba(42, 22, 28, 0.9);
+  --text-secondary: rgba(90, 50, 60, 0.62);
+  --text-tertiary: rgba(90, 50, 60, 0.4);
+
+  --glass-surface: rgba(255, 250, 252, 0.78);
+  --glass-border: rgba(140, 80, 95, 0.12);
+
+  --danger: #c43d55;
+  --warning: #c47830;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * GOTHIC — “Cathedral parchment”
+ * Candle brass + oxblood. Dark = void nave; light = aged manuscript (stays light).
+ * Signature: brass hairlines and parchment ink, not generic gold-on-gray.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"][data-skin="gothic"] {
+  --accent: #d4b56a;
+  --accent-muted: rgba(212, 181, 106, 0.16);
+  --accent-hover: #e8cd8a;
+  --accent-fg: #141008;
+  --border-focus: rgba(212, 181, 106, 0.55);
+
+  --bg-app: #0a0908;
+  --bg-main: #12100d;
+  --bg-sidebar-solid: #15120f;
+  --bg-aside: #15120f;
+  --bg-elevated: #1c1812;
+  --bg-input: #13110e;
+  --bg-code: #080706;
+  --bg-card: #1c1812;
+  --bg-user-bubble: #262018;
+  --bg-sidebar: rgba(21, 18, 15, 0.5);
+
+  --bg-hover: rgba(212, 181, 106, 0.07);
+  --bg-active: rgba(212, 181, 106, 0.12);
+
+  --border-subtle: rgba(200, 165, 90, 0.14);
+  --border-strong: rgba(200, 165, 90, 0.26);
+
+  --text-primary: rgba(245, 234, 210, 0.94);
+  --text-secondary: rgba(186, 168, 130, 0.75);
+  --text-tertiary: rgba(160, 140, 100, 0.48);
+
+  --glass-surface: rgba(28, 24, 18, 0.8);
+  --glass-surface-solid: rgba(34, 28, 20, 0.97);
+  --glass-border: rgba(200, 165, 90, 0.18);
+
+  --warning: #d4b56a;
+  --warning-muted: rgba(212, 181, 106, 0.14);
+  --warning-fg: #1a1208;
+  --danger: #c45c52;
+  --danger-muted: rgba(196, 92, 82, 0.16);
+  --success: #7aab6e;
+  --info: #a89060;
+}
+
+[data-theme="light"][data-skin="gothic"] {
+  /* Full light shell — manuscript desk, not a dark theme forced light */
+  --accent: #8b6914;
+  --accent-muted: rgba(139, 105, 20, 0.12);
+  --accent-hover: #6e5210;
+  --accent-fg: #fff8ec;
+  --border-focus: rgba(139, 105, 20, 0.5);
+
+  --bg-app: #ebe2d2;
+  --bg-main: #f7f1e4;
+  --bg-sidebar-solid: #e2d6c0;
+  --bg-aside: #f7f1e4;
+  --bg-elevated: #fbf6eb;
+  --bg-input: #fbf6eb;
+  --bg-code: #e8dfcf;
+  --bg-card: #fbf6eb;
+  --bg-user-bubble: #e6d9c4;
+  --bg-sidebar: rgba(232, 220, 196, 0.55);
+
+  --bg-hover: rgba(107, 46, 42, 0.06);
+  --bg-active: rgba(139, 105, 20, 0.1);
+
+  --border-subtle: rgba(90, 70, 40, 0.12);
+  --border-strong: rgba(90, 70, 40, 0.2);
+
+  --text-primary: rgba(36, 28, 18, 0.92);
+  --text-secondary: rgba(72, 56, 36, 0.68);
+  --text-tertiary: rgba(72, 56, 36, 0.42);
+  --text-inverse: #f7f1e4;
+
+  --glass-surface: rgba(251, 246, 235, 0.82);
+  --glass-surface-solid: rgba(251, 246, 235, 0.96);
+  --glass-border: rgba(90, 70, 40, 0.14);
+
+  --warning: #9a5a20;
+  --warning-muted: rgba(154, 90, 32, 0.12);
+  --warning-fg: #fff8ec;
+  --danger: #9a3a32;
+  --danger-muted: rgba(154, 58, 50, 0.12);
+  --success: #3d7a48;
+  --info: #6b5a30;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * MIST — “Nordic fog”
+ * Desaturated sage + slate. Quiet, airy, low chroma — the “calm focus” pack.
+ * Signature: cool green-gray chrome, never warm.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"][data-skin="mist"] {
+  --accent: #7a9e98;
+  --accent-muted: rgba(122, 158, 152, 0.16);
+  --accent-hover: #96b5af;
+  --accent-fg: #0c1010;
+  --border-focus: rgba(122, 158, 152, 0.5);
+
+  --bg-app: #0e1214;
+  --bg-main: #14191c;
+  --bg-sidebar-solid: #12171a;
+  --bg-aside: #12171a;
+  --bg-elevated: #1a2125;
+  --bg-input: #13181b;
+  --bg-code: #0b0e10;
+  --bg-card: #1a2125;
+  --bg-user-bubble: #222a2e;
+  --bg-sidebar: rgba(18, 23, 26, 0.5);
+
+  --bg-hover: rgba(122, 158, 152, 0.07);
+  --bg-active: rgba(122, 158, 152, 0.12);
+
+  --border-subtle: rgba(150, 175, 180, 0.1);
+  --border-strong: rgba(150, 175, 180, 0.18);
+
+  --text-primary: rgba(228, 236, 236, 0.92);
+  --text-secondary: rgba(160, 178, 176, 0.7);
+  --text-tertiary: rgba(140, 158, 156, 0.45);
+
+  --glass-surface: rgba(26, 33, 37, 0.78);
+  --glass-border: rgba(150, 175, 180, 0.14);
+
+  --success: #6aaa8e;
+  --info: #7a9e98;
+  --warning: #c4a06a;
+}
+
+[data-theme="light"][data-skin="mist"] {
+  --accent: #3f6b66;
+  --accent-muted: rgba(63, 107, 102, 0.12);
+  --accent-hover: #2f524e;
+  --accent-fg: #ffffff;
+  --border-focus: rgba(63, 107, 102, 0.45);
+
+  --bg-app: #e8eef0;
+  --bg-main: #f5f8f8;
+  --bg-sidebar-solid: #dce5e6;
+  --bg-aside: #f5f8f8;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-code: #e4ebec;
+  --bg-card: #ffffff;
+  --bg-user-bubble: #dde6e6;
+  --bg-sidebar: rgba(245, 250, 250, 0.55);
+
+  --bg-hover: rgba(63, 107, 102, 0.06);
+  --bg-active: rgba(63, 107, 102, 0.1);
+
+  --border-subtle: rgba(50, 70, 72, 0.1);
+  --border-strong: rgba(50, 70, 72, 0.16);
+
+  --text-primary: rgba(22, 32, 34, 0.9);
+  --text-secondary: rgba(50, 70, 72, 0.6);
+  --text-tertiary: rgba(50, 70, 72, 0.4);
+
+  --glass-surface: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(50, 70, 72, 0.12);
+
+  --success: #2f7a5c;
+  --info: #3f6b66;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * OCEAN — “Deep harbor”
+ * Teal-cyan over indigo depth — deliberately NOT default periwinkle blue.
+ * Signature: cyan accent + navy rails.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"][data-skin="ocean"] {
+  --accent: #3ec8d6;
+  --accent-muted: rgba(62, 200, 214, 0.16);
+  --accent-hover: #6ad8e3;
+  --accent-fg: #061014;
+  --border-focus: rgba(62, 200, 214, 0.55);
+
+  --bg-app: #070d14;
+  --bg-main: #0c1520;
+  --bg-sidebar-solid: #0a121c;
+  --bg-aside: #0a121c;
+  --bg-elevated: #122032;
+  --bg-input: #0d1724;
+  --bg-code: #060b12;
+  --bg-card: #122032;
+  --bg-user-bubble: #173048;
+  --bg-sidebar: rgba(10, 18, 28, 0.5);
+
+  --bg-hover: rgba(62, 200, 214, 0.08);
+  --bg-active: rgba(62, 200, 214, 0.14);
+
+  --border-subtle: rgba(80, 160, 200, 0.12);
+  --border-strong: rgba(80, 160, 200, 0.22);
+
+  --text-primary: rgba(220, 240, 248, 0.94);
+  --text-secondary: rgba(140, 180, 200, 0.72);
+  --text-tertiary: rgba(120, 160, 180, 0.45);
+
+  --glass-surface: rgba(16, 30, 46, 0.8);
+  --glass-surface-solid: rgba(18, 34, 52, 0.97);
+  --glass-border: rgba(80, 180, 200, 0.16);
+
+  --info: #3ec8d6;
+  --info-muted: rgba(62, 200, 214, 0.14);
+  --success: #3ecf9a;
+  --warning: #e0a040;
+}
+
+[data-theme="light"][data-skin="ocean"] {
+  --accent: #0d7c8c;
+  --accent-muted: rgba(13, 124, 140, 0.12);
+  --accent-hover: #0a6270;
+  --accent-fg: #ffffff;
+  --border-focus: rgba(13, 124, 140, 0.5);
+
+  --bg-app: #e4eef4;
+  --bg-main: #f4fafc;
+  --bg-sidebar-solid: #d4e4ee;
+  --bg-aside: #f4fafc;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-code: #e0ecf2;
+  --bg-card: #ffffff;
+  --bg-user-bubble: #d2e6f0;
+  --bg-sidebar: rgba(240, 250, 252, 0.55);
+
+  --bg-hover: rgba(13, 124, 140, 0.06);
+  --bg-active: rgba(13, 124, 140, 0.1);
+
+  --border-subtle: rgba(30, 70, 90, 0.1);
+  --border-strong: rgba(30, 70, 90, 0.16);
+
+  --text-primary: rgba(12, 28, 40, 0.9);
+  --text-secondary: rgba(30, 70, 90, 0.62);
+  --text-tertiary: rgba(30, 70, 90, 0.4);
+
+  --glass-surface: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(30, 70, 90, 0.12);
+
+  --info: #0d7c8c;
+  --success: #1a8f6a;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * EMBER — “Forge coal”
+ * Copper flame on charcoal / warm clay day. Heat without pure traffic-orange.
+ * Signature: ember glow hover + scorched brown rails.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"][data-skin="ember"] {
+  --accent: #f08a3c;
+  --accent-muted: rgba(240, 138, 60, 0.16);
+  --accent-hover: #ffb06a;
+  --accent-fg: #140c06;
+  --border-focus: rgba(240, 138, 60, 0.55);
+
+  --bg-app: #0e0a08;
+  --bg-main: #16100c;
+  --bg-sidebar-solid: #130e0a;
+  --bg-aside: #130e0a;
+  --bg-elevated: #1e1610;
+  --bg-input: #14100c;
+  --bg-code: #0a0806;
+  --bg-card: #1e1610;
+  --bg-user-bubble: #2a1c14;
+  --bg-sidebar: rgba(19, 14, 10, 0.5);
+
+  --bg-hover: rgba(240, 138, 60, 0.08);
+  --bg-active: rgba(240, 138, 60, 0.14);
+
+  --border-subtle: rgba(220, 150, 90, 0.12);
+  --border-strong: rgba(220, 150, 90, 0.22);
+
+  --text-primary: rgba(255, 236, 220, 0.94);
+  --text-secondary: rgba(210, 160, 120, 0.72);
+  --text-tertiary: rgba(180, 130, 90, 0.45);
+
+  --glass-surface: rgba(34, 24, 16, 0.8);
+  --glass-surface-solid: rgba(40, 28, 18, 0.97);
+  --glass-border: rgba(220, 150, 90, 0.16);
+
+  --warning: #f08a3c;
+  --warning-muted: rgba(240, 138, 60, 0.16);
+  --warning-fg: #1a1008;
+  --danger: #e05545;
+  --success: #7cb86a;
+  --info: #d4a06a;
+}
+
+[data-theme="light"][data-skin="ember"] {
+  --accent: #c45a12;
+  --accent-muted: rgba(196, 90, 18, 0.12);
+  --accent-hover: #9e480e;
+  --accent-fg: #ffffff;
+  --border-focus: rgba(196, 90, 18, 0.5);
+
+  --bg-app: #f3ebe2;
+  --bg-main: #fbf6f0;
+  --bg-sidebar-solid: #eadccf;
+  --bg-aside: #fbf6f0;
+  --bg-elevated: #fffaf5;
+  --bg-input: #fffaf5;
+  --bg-code: #efe4d8;
+  --bg-card: #fffaf5;
+  --bg-user-bubble: #ead5c4;
+  --bg-sidebar: rgba(255, 248, 240, 0.55);
+
+  --bg-hover: rgba(196, 90, 18, 0.06);
+  --bg-active: rgba(196, 90, 18, 0.1);
+
+  --border-subtle: rgba(90, 50, 30, 0.1);
+  --border-strong: rgba(90, 50, 30, 0.18);
+
+  --text-primary: rgba(40, 24, 14, 0.92);
+  --text-secondary: rgba(90, 50, 30, 0.64);
+  --text-tertiary: rgba(90, 50, 30, 0.42);
+
+  --glass-surface: rgba(255, 250, 245, 0.82);
+  --glass-border: rgba(90, 50, 30, 0.12);
+
+  --warning: #c45a12;
+  --warning-muted: rgba(196, 90, 18, 0.12);
+  --warning-fg: #fff8f0;
+  --danger: #c04030;
+  --success: #3d8a48;
+  --info: #9a6a30;
+}

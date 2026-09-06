@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "package": "pi-repl-py@0.8.0",
+  "files": [
+    {
+      "path": "src/engine/index.ts",
+      "before": "0b9583b1ed0e7fa06cf5e88b55bc66f3cf2a51436f8540e8d62139dc21f29e0d",
+      "after": "b1b61eb661d40e8530917a437cd34ce733494387ba922852568897eb6028a80a",
+      "edits": 4
+    },
+    {
+      "path": "src/engine/kernel.ts",
+      "before": "59883f464f19e65cc219d5d7086acbf8d504713d13520b1af1ffcdd6999fdb89",
+      "after": "69937bfbbe2cf66cdbb7bf300dcd06740bd295d4d18c92ef6f5aa1324164b716",
+      "edits": 9
+    }
+  ]
+}

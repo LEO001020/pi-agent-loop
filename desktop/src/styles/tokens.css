@@ -1,0 +1,291 @@
+/* Design tokens from docs/design-tokens.md — single source for CSS.
+   Mount via data-theme="dark|light" on documentElement. */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --radius-window: 12px;
+  --radius-lg: 10px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --radius-full: 9999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  --sidebar-width: 260px;
+  --aside-width: 360px;
+  --titlebar-height: 40px;
+  --input-min-height: 52px;
+  --control-height: 32px;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --leading-tight: 1.35;
+  --leading-normal: 1.55;
+
+  --motion-fast: 120ms;
+  --motion-normal: 200ms;
+
+  /* Solid window base — never leave transparent or theme switches flash white */
+  --bg-app: #0d0d0d;
+  /*
+   * Workbench left rail tint (mac only paints this ONCE over native vibrancy).
+   * Do not stack CSS backdrop-filter on top — that was a second frosted layer.
+   * Alpha ~0.4 reads clearly more open than 0.8 while text stays readable.
+   * Win uses --bg-sidebar-solid (no system vibrancy).
+   */
+  --bg-sidebar: rgba(16, 16, 16, 0.4);
+  --bg-sidebar-solid: #101010;
+  --bg-main: #151515;
+  --bg-aside: #101010;
+  --bg-elevated: #1a1a1a;
+  --bg-overlay: rgba(0, 0, 0, 0.55);
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.08);
+  --bg-input: #121212;
+  --bg-code: #0a0a0a;
+  --bg-card: #1a1a1a;
+  --bg-user-bubble: #2a2a2e;
+
+  /*
+   * Unified frosted glass (modals, menus, floating panels).
+   * Tuned to match product reference: translucent dark + strong blur + soft edge.
+   */
+  --glass-surface: rgba(28, 28, 30, 0.72);
+  --glass-surface-solid: rgba(36, 36, 38, 0.97);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-blur: 48px;
+  --glass-saturate: 1.85;
+  --glass-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.08) inset,
+    0 8px 28px rgba(0, 0, 0, 0.4),
+    0 24px 64px rgba(0, 0, 0, 0.32);
+
+  /*
+   * Sidebar CSS blur is unused on mac (native vibrancy only).
+   * Kept for experiments / non-mac CSS glass if re-enabled later.
+   */
+  --sidebar-blur: 120px;
+  --sidebar-saturate: 2;
+  --sidebar-edge-line: rgba(255, 255, 255, 0.06);
+  --sidebar-edge-inset: none;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-focus: rgba(140, 170, 255, 0.55);
+
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.58);
+  --text-tertiary: rgba(255, 255, 255, 0.38);
+  --text-inverse: #0d0d0d;
+
+  --accent: #8aa4ff;
+  --accent-muted: rgba(138, 164, 255, 0.14);
+  --accent-hover: #a0b6ff;
+  /* Text/icon on filled accent CTAs (.btn--primary). Dark ink on light accent. */
+  --accent-fg: #0d0d0d;
+
+  --success: #3ecf8e;
+  --success-muted: rgba(62, 207, 142, 0.14);
+  /* Warning / trust / pending — orange status only (not primary CTAs) */
+  --warning: #f0993d;
+  --warning-muted: rgba(240, 153, 61, 0.16);
+  --warning-fg: #1a1008;
+  --danger: #f07178;
+  --danger-muted: rgba(240, 113, 120, 0.14);
+  --info: #6cb6ff;
+  --info-muted: rgba(108, 182, 255, 0.14);
+
+  /* Overlay scrollbar: track always transparent; floating thumb on hover */
+  --scrollbar-size: 8px;
+  --scrollbar-thumb-width: 6px;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.3);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.45);
+  --scrollbar-track: transparent;
+  --shadow-window: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --shadow-pop: var(--glass-shadow);
+
+  /*
+   * Floating menus / popovers.
+   * Glass still used by selects / user sheet / slash where appropriate.
+   * Context menus (right-click) use solid --menu-context-* below.
+   */
+  --menu-surface: var(--glass-surface);
+  --menu-surface-solid: var(--glass-surface-solid);
+  --menu-border: var(--glass-border);
+  --menu-blur: var(--glass-blur);
+  --menu-saturate: var(--glass-saturate);
+  --menu-shadow: var(--glass-shadow);
+  --menu-radius: 12px;
+  --menu-pad: 6px;
+  --menu-gap: 2px;
+  --menu-item-pad-y: 8px;
+  --menu-item-pad-x: 12px;
+  --menu-item-radius: 8px;
+  --menu-item-gap: 10px;
+  --menu-font: 13px;
+  --menu-font-weight: 400;
+  --menu-icon: 18px;
+  --menu-sep-margin-y: 5px;
+  --menu-sep-margin-x: 8px;
+  --menu-hover: rgba(255, 255, 255, 0.08);
+  --menu-active: rgba(255, 255, 255, 0.1);
+
+  /* Context / right-click menus — solid, compact */
+  --menu-context-bg: #2a2a2c;
+  --menu-context-border: rgba(255, 255, 255, 0.1);
+  --menu-context-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.35),
+    0 0 0 0.5px rgba(0, 0, 0, 0.2);
+  --menu-context-radius: 10px;
+  --menu-context-pad: 4px;
+  --menu-context-gap: 1px;
+  --menu-context-item-pad-y: 6px;
+  --menu-context-item-pad-x: 8px;
+  --menu-context-item-radius: 6px;
+  --menu-context-item-gap: 6px;
+  /* Soft floor only — panels size to content; avoid large fixed widths */
+  --menu-min-width: 0px;
+  --menu-max-width: min(360px, calc(100vw - 16px));
+
+  /*
+   * Modal / dialog shell layout (shared by GlassModal + .modal).
+   * Radius + spacing aligned to floating-panel reference; material = glass.
+   */
+  --modal-radius: 16px;
+  --modal-pad-x: 24px;
+  --modal-pad-y: 20px;
+  --modal-gap: 16px;
+  --modal-title-size: 16px;
+  --modal-body-gap: 12px;
+  --modal-actions-gap: 8px;
+  --modal-width-sm: 420px;
+  --modal-width-md: 480px;
+  --modal-width-lg: 560px;
+
+  /* mac traffic-light safe inset — leave room so panel toggle never underlaps lights.
+   * Overlay chrome: red/yellow/green ~52–70px; 28px control + gap → ≥96px. */
+  --titlebar-safe-left: 96px;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #f4f4f6;
+  /*
+   * ChatGPT/Cursor-style light chrome:
+   * - Sidebar: translucent white glass over native light vibrancy (airier than solid)
+   * - Main / aside: pure solid white (elevated content column)
+   * - Edge: soft inward shade at sidebar→main (see --sidebar-edge-inset)
+   */
+  /* More open glass — translucent white over light vibrancy */
+  --bg-sidebar: rgba(255, 255, 255, 0.38);
+  --bg-sidebar-solid: #ececef;
+  --bg-main: #ffffff;
+  --bg-aside: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-overlay: rgba(20, 20, 24, 0.4);
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.06);
+  --bg-input: #ffffff;
+  --bg-code: #f0f0f2;
+  --bg-card: #ffffff;
+  --bg-user-bubble: #e8e8ed;
+
+  /* Subtle edge only — tight inset, low opacity (hierarchy without drama) */
+  --sidebar-edge-line: rgba(0, 0, 0, 0.04);
+  --sidebar-edge-inset:
+    inset -1px 0 0 var(--sidebar-edge-line),
+    inset -8px 0 12px -8px rgba(0, 0, 0, 0.035);
+
+  --glass-surface: rgba(255, 255, 255, 0.72);
+  --glass-surface-solid: rgba(255, 255, 255, 0.96);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-blur: 48px;
+  --glass-saturate: 1.7;
+  --glass-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.7) inset,
+    0 8px 28px rgba(0, 0, 0, 0.1),
+    0 20px 48px rgba(0, 0, 0, 0.08);
+
+  --sidebar-blur: 120px;
+  --sidebar-saturate: 1.85;
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-strong: rgba(0, 0, 0, 0.1);
+  --border-focus: rgba(70, 100, 220, 0.55);
+
+  --text-primary: rgba(0, 0, 0, 0.88);
+  --text-secondary: rgba(0, 0, 0, 0.55);
+  --text-tertiary: rgba(0, 0, 0, 0.36);
+
+  --menu-surface: var(--glass-surface);
+  --menu-surface-solid: var(--glass-surface-solid);
+  --menu-border: var(--glass-border);
+  --menu-blur: var(--glass-blur);
+  --menu-saturate: var(--glass-saturate);
+  --menu-shadow: var(--glass-shadow);
+  --menu-hover: rgba(0, 0, 0, 0.05);
+  --menu-active: rgba(0, 0, 0, 0.07);
+
+  --menu-context-bg: #ffffff;
+  --menu-context-border: rgba(0, 0, 0, 0.08);
+  --menu-context-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.1),
+    0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  --menu-context-radius: 10px;
+  --menu-context-pad: 4px;
+  --menu-context-gap: 1px;
+  --menu-context-item-pad-y: 6px;
+  --menu-context-item-pad-x: 8px;
+  --menu-context-item-radius: 6px;
+  --menu-context-item-gap: 6px;
+
+  --text-inverse: #ffffff;
+
+  --accent: #3d5fd9;
+  --accent-muted: rgba(61, 95, 217, 0.1);
+  --accent-hover: #2f4fc4;
+  /* White label on deep accent. */
+  --accent-fg: #ffffff;
+
+  --success: #1a9f63;
+  --success-muted: rgba(26, 159, 99, 0.12);
+  /* Warning / trust / pending — orange status only (not primary CTAs) */
+  --warning: #e07020;
+  --warning-muted: rgba(224, 112, 32, 0.12);
+  --warning-fg: #ffffff;
+  --danger: #d13b45;
+  --danger-muted: rgba(209, 59, 69, 0.1);
+  --info: #2a7ed4;
+  --info-muted: rgba(42, 126, 212, 0.1);
+
+  --scrollbar-size: 8px;
+  --scrollbar-thumb-width: 6px;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.24);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.38);
+  --scrollbar-track: transparent;
+  /* Softer than dark — avoid heavy black halo on white chrome */
+  --shadow-window: 0 8px 28px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-pop: var(--glass-shadow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-normal: 0ms;
+  }
+}

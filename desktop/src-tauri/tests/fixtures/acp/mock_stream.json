@@ -1,0 +1,37 @@
+{
+  "_comment": "In-process mock_acp stream for prompt «hi», chunk size 6. Regenerated from mock_reply_for + chunk_text.",
+  "prompt": "hi",
+  "sessionId": "s-mock-1",
+  "messageId": "m-mock-1",
+  "chunkChars": 6,
+  "expectedFullText": "Mock ACP reply: I received «hi». This stream is fake token output from the in-process stub — not pi agent stdio. Ready for PR3 swap.",
+  "expectedChunks": [
+    "Mock A",
+    "CP rep",
+    "ly: I ",
+    "receiv",
+    "ed «hi",
+    "». Thi",
+    "s stre",
+    "am is ",
+    "fake t",
+    "oken o",
+    "utput ",
+    "from t",
+    "he in-",
+    "proces",
+    "s stub",
+    " — not",
+    " pi ag",
+    "ent st",
+    "dio. R",
+    "eady f",
+    "or PR3",
+    " swap."
+  ],
+  "expect": {
+    "minChunks": 2,
+    "lastDone": true,
+    "contains": ["Mock ACP", "not pi agent stdio"]
+  }
+}

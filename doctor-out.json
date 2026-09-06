@@ -1,0 +1,100 @@
+{
+  "version": "0.1.0-rc.1",
+  "node": "v24.18.0",
+  "platform": "win32",
+  "architecture": "x64",
+  "endpoints": {
+    "glm": "https://nanshanyougui.xyz/v1",
+    "gemini": "http://127.0.0.1:8045/v1",
+    "authenticated": true
+  },
+  "checks": [
+    {
+      "kind": "sandbox",
+      "passed": false,
+      "exitCode": 1,
+      "output": ""
+    },
+    {
+      "kind": "python-packages",
+      "passed": true,
+      "versions": "7.3.0 8.10.0 3.1.2",
+      "persistenceTest": "see validation; an import probe alone does not prove a persistent kernel"
+    },
+    {
+      "role": "owner",
+      "model": "glm-5.3",
+      "api": "openai-responses",
+      "passed": true,
+      "durationMs": 1817,
+      "stopReason": "stop",
+      "text": "PI_LOOP_OK",
+      "usage": {
+        "input": 26,
+        "output": 8,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 34,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    },
+    {
+      "role": "gemini",
+      "model": "gemini-3.8-flash-high",
+      "api": "openai-completions",
+      "passed": true,
+      "durationMs": 1328,
+      "stopReason": "stop",
+      "text": "PI_LOOP_OK",
+      "usage": {
+        "input": 80,
+        "output": 5,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 101,
+        "totalTokens": 85,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    },
+    {
+      "role": "flash",
+      "model": "glm-5.3-flash",
+      "api": "openai-responses",
+      "passed": true,
+      "durationMs": 3416,
+      "stopReason": "stop",
+      "text": "PI_LOOP_OK",
+      "usage": {
+        "input": 26,
+        "output": 119,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 145,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      }
+    }
+  ],
+  "passed": false,
+  "providerProbes": "ACTUALLY_ATTEMPTED",
+  "pricing": "USER_CONFIGURED_OR_UNKNOWN_NOT_FREE"
+}

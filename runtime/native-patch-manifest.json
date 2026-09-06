@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "package": "pi-subagents@0.65.1",
+  "path": "src/runs/shared/worktree.ts",
+  "before": "e804f49e2f4f2eb5639c1fc3d3cc31ec0d9599306ebd2b1b9889c31c1292f950",
+  "after": "33f16c7d4477526eb5eeb91c95ceab60b546fcdb4cc49664c93ab69e3122ea19",
+  "purpose": "host-side Git marker confinement before capture; bounded setup command",
+  "gitCompatibility": "explicit a/ and b/ prefixes also work on Git 2.39.5"
+}

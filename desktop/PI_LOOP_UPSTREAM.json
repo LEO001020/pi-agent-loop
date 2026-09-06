@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/AJSubrizi/Pi-App",
+  "commit": "a3dc3cfbdec6db82fb9cc21fbd2605ff83499f1d",
+  "license": "MIT",
+  "packageVersion": "0.3.0",
+  "status": "Audited upstream adopted; local integration changes are recorded separately and require runtime tests."
+}

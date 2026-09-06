@@ -1,0 +1,67 @@
+[package]
+name = "pi-app"
+version = "0.3.0"
+description = "Desktop GUI for Pi — projects, sessions and packages over Pi RPC"
+authors = ["Pi contributors"]
+edition = "2021"
+
+[lib]
+name = "pi_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `unstable` — multi-webview (resource pane embedded browser)
+# `macos-private-api` — required by tauri.macos.conf.json `macOSPrivateApi: true`
+#   (transparent titlebar + window-vibrancy). Keep the feature on all targets so
+#   cargo-xwin Windows cross-builds pass tauri-build feature allowlist checks;
+#   runtime effect is macOS-only.
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "tray-icon", "image-png", "unstable"] }
+tauri-plugin-store = "2"
+# Second launch focuses existing window (Dock multi-open reports).
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "2"
+parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+directories = "6"
+which = "7"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
+futures-util = "0.3"
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+rfd = "0.15"
+window-vibrancy = "0.6"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# OS secret store: macOS Keychain / Windows Credential Manager / Linux Secret Service.
+# No default features — enable platform stores explicitly; file fallback lives in secrets.rs.
+keyring = { version = "3.6", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+    "crypto-rust",
+] }
+arboard = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+fs2 = "0.4"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+url = "2"
+portable-pty = "0.9"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

@@ -1,0 +1,1858 @@
+//! Independent store under ~/.pi-app: projects, sessions index, settings, secrets.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::paths::{
+    automations_file, ensure_app_dirs, projects_file, session_dir, sessions_index_file,
+    settings_file,
+};
+
+/// Where composer model / effort / mode / permission choices are remembered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComposerPrefsScope {
+    Global,
+    Project,
+    Session,
+}
+
+impl ComposerPrefsScope {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "project" => Self::Project,
+            "session" => Self::Session,
+            _ => Self::Global,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Project => "project",
+            Self::Session => "session",
+        }
+    }
+}
+
+/// Effective composer prefs resolved for the current context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerPrefs {
+    pub model_id: String,
+    pub effort: String,
+    pub mode: String,
+    pub permission_policy: String,
+    /// Scope that was used when resolving (after reading settings).
+    pub scope: String,
+    /// Which layer actually supplied the values (global | project | session).
+    pub source: String,
+}
+
+impl Default for ComposerPrefs {
+    fn default() -> Self {
+        Self {
+            model_id: "auto".into(),
+            // Balanced default: faster than high, deeper than low.
+            effort: "medium".into(),
+            mode: "agent".into(),
+            permission_policy: "ask".into(),
+            scope: "global".into(),
+            source: "global".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub trusted: bool,
+    pub last_opened_at: DateTime<Utc>,
+    pub path_ok: bool,
+    /// Pinned projects float to the top of the sidebar.
+    #[serde(default)]
+    pub pinned: bool,
+    /// Per-project composer prefs (used when scope = project).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_policy: Option<String>,
+    /// Optional model defaults for the plan/review modes. Empty means inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMeta {
+    pub id: String,
+    pub project_id: Option<String>,
+    pub title: String,
+    /// Remote workspace path selected for this chat, when the SSH runtime is active.
+    /// Local projects continue to use `project_id`; this keeps POSIX paths out of
+    /// the desktop project registry while allowing a session to resume its
+    /// remote worktree after a restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_cwd: Option<String>,
+    pub agent_session_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub model_id: Option<String>,
+    /// Archived chats stay on disk but hide from the default tree.
+    #[serde(default)]
+    pub archived: bool,
+    /// Pinned chats float to the top of the sidebar (within their group).
+    #[serde(default)]
+    pub pinned: bool,
+    /// Per-session composer prefs (used when scope = session).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_policy: Option<String>,
+    /// Created by shell scheduled automation (`runAutomation`).
+    #[serde(default)]
+    pub scheduled: bool,
+    /// Automation definition that owns this scheduled session, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_automation_id: Option<String>,
+    /// Active append-only automation run attached to this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_automation_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    pub theme: String,
+    pub locale: String,
+    /// Local display name shown in the desktop shell and usage profile.
+    #[serde(default)]
+    pub user_name: String,
+    pub session_data_mode: String,
+    pub manual_cli_path: Option<String>,
+    pub permission_policy: String,
+    pub model_id: Option<String>,
+    pub effort: Option<String>,
+    pub mode: String,
+    pub onboarding_done: bool,
+    pub setup_skipped: bool,
+    /// First-run setup wizard finished (CLI gate + optional auth step).
+    #[serde(default)]
+    pub setup_wizard_completed: bool,
+    /// User skipped account/provider configuration during setup.
+    #[serde(default)]
+    pub auth_setup_deferred: bool,
+    /// Default “open path” target: `finder` / `explorer` / editor id (`code`, `cursor`, …).
+    #[serde(default = "default_open_target")]
+    pub default_open_target: String,
+    /// Remember model / effort / mode / permission at global | project | session.
+    #[serde(default = "default_composer_prefs_scope")]
+    pub composer_prefs_scope: String,
+    /// **API mode.** When set (`host:port`), sessions connect to a remote ACP
+    /// server over TCP instead of spawning the local `pi agent stdio` — the
+    /// agent can run in WSL, a container, or on another host. Empty/unset uses
+    /// the normal local-CLI spawn path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_server_addr: Option<String>,
+    /// Run Pi RPC on a POSIX server through the system OpenSSH client.
+    #[serde(default)]
+    pub remote_runtime: RemoteRuntimeSettings,
+    /// Max warm/live agent processes (I02). Default 3.
+    #[serde(default = "default_max_concurrent_agents")]
+    pub max_concurrent_agents: u32,
+    /// Recycle idle agent processes after this many minutes (I03). Default 30.
+    #[serde(default = "default_agent_idle_minutes")]
+    pub agent_idle_minutes: u32,
+    /// Pure stream silence before cancel prompt (I06). Default 120 seconds.
+    #[serde(default = "default_stream_stall_seconds")]
+    pub stream_stall_seconds: u32,
+    /// Store App API keys in the OS keychain (macOS Keychain / Win Cred / Secret Service).
+    /// Default **false**: keys stay in `secrets.json` (0600) so cold start does not
+    /// trigger system password prompts. Official CLI login still uses `auth.json`.
+    #[serde(default)]
+    pub store_api_keys_in_keychain: bool,
+    /// OS-level sandbox profile for spawned `pi agent` processes
+    /// (`off` | `workspace` | `read-only` | `strict` | `devbox`). Default off.
+    /// Passed as top-level `pi --sandbox <profile>` / `PI_SANDBOX` at spawn.
+    #[serde(default = "default_sandbox_profile")]
+    pub sandbox_profile: String,
+    /// Enable Pi CLI cross-session memory (`--experimental-memory` / `PI_MEMORY=1`
+    /// / `[memory] enabled`). Default **false** — experimental; when off, spawn forces
+    /// `--no-memory` + `PI_MEMORY=0` for isolation (esp. independent mode).
+    #[serde(default)]
+    pub experimental_memory: bool,
+    /// Cap agent turns per process via top-level `pi --max-turns N`.
+    /// `None` or `0` = omit the flag (CLI default / unlimited).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_agent_turns: Option<u32>,
+    /// When true, spawn agents with top-level `--disable-web-search` so
+    /// `web_search` / `web_fetch` tools are removed. Default false (CLI default).
+    #[serde(default)]
+    pub disable_web_search: bool,
+    /// Reopen the last active chat once after launch (default true).
+    #[serde(default = "default_reopen_last_session")]
+    pub reopen_last_session: bool,
+    /// Last successfully opened / switched session (for startup restore).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_session_id: Option<String>,
+    /// Project of [`Self::last_session_id`] when it belonged to one (hint only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_project_id: Option<String>,
+    /// When true (default), agents may enter plan mode. When false, spawn with
+    /// top-level `--no-plan` so plan mode is disabled for that process.
+    #[serde(default = "default_plan_enabled")]
+    pub plan_enabled: bool,
+    /// Allow Pi CLI subagent spawning (`Agent` / task tools). Default **true**
+    /// (CLI default). When false, spawn forces `--no-subagents` + `PI_SUBAGENTS=0`
+    /// and independent mode writes `[subagents] enabled = false`.
+    #[serde(default = "default_true")]
+    pub subagents_enabled: bool,
+    /// Preferred Pi CLI agent definition for new agent processes
+    /// (`explore` / `plan` / `general-purpose` / custom name under `~/.pi/agents`).
+    /// Empty / `default` / `none` → omit top-level `--agent` (CLI default).
+    /// Applied at spawn only; changing it soft-respawns the live agent.
+    #[serde(default)]
+    pub preferred_agent: String,
+    /// Connect local ACP agents to a shared Pi CLI leader process
+    /// (`pi agent --leader`). Default **false** — each agent is a standalone
+    /// process (`--no-leader`). Advanced; multiple clients can share one backend.
+    #[serde(default)]
+    pub use_leader: bool,
+    /// Pi primitive `--tools`: allowlist of tool names enabled for spawned
+    /// agents (built-in, extension and custom). Empty → omit the flag.
+    #[serde(default)]
+    pub tools_allow: Vec<String>,
+    /// Pi primitive `--exclude-tools`: denylist of tool names disabled for
+    /// spawned agents. Empty → omit the flag.
+    #[serde(default)]
+    pub tools_deny: Vec<String>,
+    /// Stable human roles mapped to model ids (fast/deep/cheap/review/local).
+    #[serde(default)]
+    pub model_roles: BTreeMap<String, String>,
+    /// Optional spend ceilings by model tier. Missing/zero means unlimited.
+    #[serde(default)]
+    pub budget_monthly_by_tier: BTreeMap<String, f64>,
+    #[serde(default)]
+    pub budget_session_by_tier: BTreeMap<String, f64>,
+    /// Context percentage at which automatic compaction may begin.
+    #[serde(default = "default_compaction_threshold_percent")]
+    pub compaction_threshold_percent: u8,
+    /// Opt-in fallback chains keyed by stable model role.
+    #[serde(default)]
+    pub fallback_chains: BTreeMap<String, Vec<String>>,
+    /// Crash reports are local-only and disabled until the user opts in.
+    #[serde(default)]
+    pub crash_reporting_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteRuntimeSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub verified: bool,
+    #[serde(default = "default_remote_transport")]
+    pub transport: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub user: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub identity_file: String,
+    #[serde(default = "default_remote_pi_path")]
+    pub pi_path: String,
+    #[serde(default = "default_remote_cwd")]
+    pub cwd: String,
+    #[serde(default)]
+    pub direct_url: String,
+    #[serde(default)]
+    pub direct_token_configured: bool,
+}
+
+fn default_remote_transport() -> String {
+    "ssh".into()
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+fn default_remote_pi_path() -> String {
+    "pi".into()
+}
+
+fn default_remote_cwd() -> String {
+    "~".into()
+}
+
+impl Default for RemoteRuntimeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            verified: false,
+            transport: default_remote_transport(),
+            host: String::new(),
+            user: String::new(),
+            port: default_ssh_port(),
+            identity_file: String::new(),
+            pi_path: default_remote_pi_path(),
+            cwd: default_remote_cwd(),
+            direct_url: String::new(),
+            direct_token_configured: false,
+        }
+    }
+}
+
+fn default_composer_prefs_scope() -> String {
+    "global".into()
+}
+
+fn default_open_target() -> String {
+    "finder".into()
+}
+
+fn default_max_concurrent_agents() -> u32 {
+    crate::process_limits::DEFAULT_MAX_CONCURRENT_AGENTS
+}
+
+fn default_agent_idle_minutes() -> u32 {
+    crate::process_limits::DEFAULT_AGENT_IDLE_MINUTES
+}
+
+fn default_stream_stall_seconds() -> u32 {
+    crate::stream_stall::DEFAULT_STREAM_STALL_SECONDS
+}
+
+fn default_sandbox_profile() -> String {
+    "off".into()
+}
+
+fn default_reopen_last_session() -> bool {
+    true
+}
+
+fn default_plan_enabled() -> bool {
+    true
+}
+
+fn default_compaction_threshold_percent() -> u8 {
+    85
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            theme: "dark".into(),
+            // Product default is English; users can switch to zh / zh-TW in Settings.
+            locale: "en".into(),
+            user_name: String::new(),
+            session_data_mode: "independent".into(),
+            manual_cli_path: None,
+            permission_policy: "ask".into(),
+            model_id: None,
+            effort: Some("medium".into()),
+            mode: "agent".into(),
+            onboarding_done: false,
+            setup_skipped: false,
+            setup_wizard_completed: false,
+            auth_setup_deferred: false,
+            default_open_target: default_open_target(),
+            composer_prefs_scope: default_composer_prefs_scope(),
+            acp_server_addr: None,
+            remote_runtime: RemoteRuntimeSettings::default(),
+            max_concurrent_agents: default_max_concurrent_agents(),
+            agent_idle_minutes: default_agent_idle_minutes(),
+            stream_stall_seconds: default_stream_stall_seconds(),
+            store_api_keys_in_keychain: false,
+            sandbox_profile: default_sandbox_profile(),
+            experimental_memory: false,
+            max_agent_turns: None,
+            disable_web_search: false,
+            reopen_last_session: default_reopen_last_session(),
+            last_session_id: None,
+            last_project_id: None,
+            plan_enabled: default_plan_enabled(),
+            subagents_enabled: true,
+            preferred_agent: String::new(),
+            use_leader: false,
+            tools_allow: Vec::new(),
+            tools_deny: Vec::new(),
+            model_roles: BTreeMap::new(),
+            budget_monthly_by_tier: BTreeMap::new(),
+            budget_session_by_tier: BTreeMap::new(),
+            compaction_threshold_percent: default_compaction_threshold_percent(),
+            fallback_chains: BTreeMap::new(),
+            crash_reporting_enabled: false,
+        }
+    }
+}
+
+/// App-owned secrets surface (backend-agnostic).
+///
+/// Sensitive fields (`official_api_key`, `relay_api_key`) prefer the OS keychain
+/// (macOS Keychain / Windows Credential Manager / Linux Secret Service) with a
+/// `secrets.json` (0600) fallback. See [`crate::secrets`].
+///
+/// Never log these fields.
+///
+/// `keychain_has_*` are non-secret booleans written to `secrets.json` so the UI
+/// can report "has a key" without unlocking the OS keychain on every launch.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretsFile {
+    pub official_api_key: Option<String>,
+    pub relay_base_url: Option<String>,
+    pub relay_api_key: Option<String>,
+    pub default_model: Option<String>,
+    /// Official API key lives in OS keychain (value not on disk).
+    #[serde(default)]
+    pub keychain_has_official: bool,
+    /// Relay API key lives in OS keychain (value not on disk).
+    #[serde(default)]
+    pub keychain_has_relay: bool,
+}
+
+/// File/image card persisted with a chat message (user attach or agent image_gen).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageAttachmentStored {
+    pub path: String,
+    pub name: String,
+    #[serde(default)]
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageStored {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub thought: Option<String>,
+    /// Model and reasoning effort that produced this turn. Older journals omit both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    pub created_at: DateTime<Utc>,
+    /// True when this assistant row records a turn failure (retries exhausted, etc.).
+    #[serde(default)]
+    pub is_error: bool,
+    /// Local file cards (e.g. image_gen output paths).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<MessageAttachmentStored>>,
+    /// UI marker type, e.g. `context_compact` for agent auto/manual compaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker: Option<String>,
+}
+
+fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &PathBuf) -> T {
+    match fs::read_to_string(path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => T::default(),
+    }
+}
+
+/// Last quarantined store path (corrupt JSON recovered). Taken once by the UI.
+static LAST_STORE_QUARANTINE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Read JSON; if the file exists but is corrupt, quarantine it and return default.
+fn read_json_recover<T: for<'de> Deserialize<'de> + Default>(path: &PathBuf) -> T {
+    match fs::read_to_string(path) {
+        Ok(s) if s.trim().is_empty() => T::default(),
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    "corrupt store file {} ({e}); quarantining and starting empty",
+                    path.display()
+                );
+                let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+                let bak = path.with_extension(format!("corrupt-{stamp}.json"));
+                let _ = fs::rename(path, &bak);
+                if let Ok(mut g) = LAST_STORE_QUARANTINE.lock() {
+                    *g = Some(bak.display().to_string());
+                }
+                T::default()
+            }
+        },
+        Err(_) => T::default(),
+    }
+}
+
+/// Pop the most recent store quarantine path (if any) for a one-shot UI notice.
+pub fn take_store_quarantine() -> Option<String> {
+    LAST_STORE_QUARANTINE.lock().ok().and_then(|mut g| g.take())
+}
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let s = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    // Exclusive lock + temp rename so shared-mode / dual-instance writes do not
+    // leave a half-written index (E06).
+    crate::store_lock::write_bytes_atomic(path, s.as_bytes())
+}
+
+pub fn load_settings() -> AppSettings {
+    let _ = ensure_app_dirs();
+    let mut s: AppSettings = read_json(&settings_file());
+    // One-time: installs that already stored keys in keychain before the opt-in
+    // keep keychain mode so keys remain reachable without a silent loss.
+    if !s.store_api_keys_in_keychain {
+        let disk = crate::secrets::load_secrets_disk_only();
+        if disk.keychain_has_official || disk.keychain_has_relay {
+            s.store_api_keys_in_keychain = true;
+            let _ = write_json(&settings_file(), &s);
+        }
+    }
+    s
+}
+
+pub fn save_settings(s: &AppSettings) -> Result<(), String> {
+    let _ = ensure_app_dirs();
+    write_json(&settings_file(), s)
+}
+
+pub fn load_projects() -> Vec<Project> {
+    let _ = ensure_app_dirs();
+    let mut list: Vec<Project> = read_json_recover(&projects_file());
+    for p in &mut list {
+        p.path_ok = PathBuf::from(&p.path).is_dir();
+    }
+    list.sort_by(|a, b| match (b.pinned, a.pinned) {
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        _ => b.last_opened_at.cmp(&a.last_opened_at),
+    });
+    list
+}
+
+pub fn save_projects(list: &[Project]) -> Result<(), String> {
+    write_json(&projects_file(), &list)
+}
+
+pub fn add_project(path: String, trust: bool) -> Result<Project, String> {
+    let path_buf = PathBuf::from(&path);
+    if !path_buf.is_dir() {
+        return Err("path is not a directory".into());
+    }
+    let name = path_buf
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.clone());
+    let mut list = load_projects();
+    if let Some(existing) = list.iter_mut().find(|p| p.path == path) {
+        existing.trusted = trust || existing.trusted;
+        existing.last_opened_at = Utc::now();
+        existing.path_ok = true;
+        let clone = existing.clone();
+        save_projects(&list)?;
+        return Ok(clone);
+    }
+    let p = Project {
+        id: Uuid::new_v4().to_string(),
+        name,
+        path,
+        trusted: trust,
+        last_opened_at: Utc::now(),
+        path_ok: true,
+        pinned: false,
+        model_id: None,
+        effort: None,
+        mode: None,
+        permission_policy: None,
+        plan_model_id: None,
+        review_model_id: None,
+    };
+    list.push(p.clone());
+    save_projects(&list)?;
+    Ok(p)
+}
+
+/// Remove project from the app list only — does **not** delete the disk folder
+/// or any chat sessions (sessions keep their project_id and become orphans).
+pub fn remove_project(id: &str) -> Result<(), String> {
+    let mut list = load_projects();
+    list.retain(|p| p.id != id);
+    save_projects(&list)
+}
+
+/// Point a project at a new directory (folder moved / renamed on disk).
+/// Requires the path to exist as a directory; re-checks and sets `path_ok`.
+pub fn relocate_project(id: &str, new_path: String) -> Result<Project, String> {
+    let path_buf = PathBuf::from(&new_path);
+    if !path_buf.is_dir() {
+        return Err("path is not a directory".into());
+    }
+    let mut list = load_projects();
+    if list.iter().any(|p| p.id != id && p.path == new_path) {
+        return Err("another project already uses this path".into());
+    }
+    let p = list
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "project not found".to_string())?;
+    p.path = new_path;
+    p.path_ok = true;
+    p.last_opened_at = Utc::now();
+    let clone = p.clone();
+    save_projects(&list)?;
+    Ok(clone)
+}
+
+pub fn rename_project(id: &str, name: &str) -> Result<Project, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("name empty".into());
+    }
+    let mut list = load_projects();
+    let p = list
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "project not found".to_string())?;
+    p.name = name.to_string();
+    let clone = p.clone();
+    save_projects(&list)?;
+    Ok(clone)
+}
+
+pub fn set_project_pinned(id: &str, pinned: bool) -> Result<Project, String> {
+    let mut list = load_projects();
+    let p = list
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "project not found".to_string())?;
+    p.pinned = pinned;
+    let clone = p.clone();
+    save_projects(&list)?;
+    Ok(clone)
+}
+
+pub fn trust_project(id: &str) -> Result<Project, String> {
+    let mut list = load_projects();
+    let p = list
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "project not found".to_string())?;
+    p.trusted = true;
+    p.last_opened_at = Utc::now();
+    let clone = p.clone();
+    save_projects(&list)?;
+    Ok(clone)
+}
+
+/// Set or clear a project-level permission tier (L10).
+///
+/// `policy = None` / empty / `"inherit"` clears the override so the app default
+/// applies. Untrusted projects cannot store a relaxed tier.
+pub fn set_project_permission_policy(id: &str, policy: Option<String>) -> Result<Project, String> {
+    use crate::permission::PermissionPolicy;
+
+    let mut list = load_projects();
+    let p = list
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "project not found".to_string())?;
+    if !p.trusted {
+        return Err("trust this project before setting a permission tier".into());
+    }
+
+    let next = match policy {
+        None => None,
+        Some(raw) => {
+            let t = raw.trim();
+            if t.is_empty()
+                || t.eq_ignore_ascii_case("inherit")
+                || t.eq_ignore_ascii_case("app_default")
+                || t.eq_ignore_ascii_case("default")
+            {
+                None
+            } else {
+                Some(PermissionPolicy::parse(t).as_str().to_string())
+            }
+        }
+    };
+    p.permission_policy = next;
+    let clone = p.clone();
+    save_projects(&list)?;
+    Ok(clone)
+}
+
+/// Pinned first, then newest `updated_at` (mirrors project pin sort).
+pub fn sort_sessions_by_pin_then_updated(list: &mut [SessionMeta]) {
+    list.sort_by(|a, b| match (b.pinned, a.pinned) {
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        _ => b.updated_at.cmp(&a.updated_at),
+    });
+}
+
+pub fn load_sessions_index() -> Vec<SessionMeta> {
+    let _ = ensure_app_dirs();
+    // Recover from torn/corrupt index (shared CLI+App or crash mid-write).
+    let mut list: Vec<SessionMeta> = read_json_recover(&sessions_index_file());
+    sort_sessions_by_pin_then_updated(&mut list);
+    list
+}
+
+pub fn save_sessions_index(list: &[SessionMeta]) -> Result<(), String> {
+    write_json(&sessions_index_file(), &list)
+}
+
+pub fn create_session(
+    project_id: Option<String>,
+    title: Option<String>,
+    scheduled: bool,
+) -> Result<SessionMeta, String> {
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now();
+    let meta = SessionMeta {
+        id: id.clone(),
+        project_id,
+        title: title.unwrap_or_else(|| "New chat".into()),
+        remote_cwd: None,
+        agent_session_id: None,
+        created_at: now,
+        updated_at: now,
+        model_id: None,
+        archived: false,
+        pinned: false,
+        effort: None,
+        mode: None,
+        permission_policy: None,
+        scheduled,
+        scheduled_automation_id: None,
+        active_automation_run_id: None,
+    };
+    let mut list = load_sessions_index();
+    list.insert(0, meta.clone());
+    save_sessions_index(&list)?;
+    let dir = session_dir(&id);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    write_json(&dir.join("messages.json"), &Vec::<ChatMessageStored>::new())?;
+    Ok(meta)
+}
+
+pub fn update_session_meta(meta: &SessionMeta) -> Result<(), String> {
+    let mut list = load_sessions_index();
+    if let Some(s) = list.iter_mut().find(|s| s.id == meta.id) {
+        *s = meta.clone();
+    } else {
+        list.insert(0, meta.clone());
+    }
+    save_sessions_index(&list)
+}
+
+pub fn delete_session(id: &str) -> Result<(), String> {
+    let mut list = load_sessions_index();
+    list.retain(|s| s.id != id);
+    save_sessions_index(&list)?;
+    let dir = session_dir(id);
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
+pub fn rename_session(id: &str, title: &str) -> Result<SessionMeta, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("title empty".into());
+    }
+    let mut list = load_sessions_index();
+    let s = list
+        .iter_mut()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "session not found".to_string())?;
+    s.title = title.to_string();
+    s.updated_at = Utc::now();
+    let clone = s.clone();
+    save_sessions_index(&list)?;
+    Ok(clone)
+}
+
+pub fn set_session_scheduled(id: &str, scheduled: bool) -> Result<SessionMeta, String> {
+    let mut list = load_sessions_index();
+    let s = list
+        .iter_mut()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "session not found".to_string())?;
+    s.scheduled = scheduled;
+    s.updated_at = Utc::now();
+    let clone = s.clone();
+    save_sessions_index(&list)?;
+    Ok(clone)
+}
+
+/// Attach a durable automation run to its newly created session.
+pub fn attach_automation_run(
+    session_id: &str,
+    automation_id: &str,
+    run_id: &str,
+) -> Result<SessionMeta, String> {
+    let mut list = load_sessions_index();
+    let session = list
+        .iter_mut()
+        .find(|session| session.id == session_id)
+        .ok_or_else(|| "session not found".to_string())?;
+    session.scheduled = true;
+    session.scheduled_automation_id = Some(automation_id.to_string());
+    session.active_automation_run_id = Some(run_id.to_string());
+    session.updated_at = Utc::now();
+    let clone = session.clone();
+    save_sessions_index(&list)?;
+    Ok(clone)
+}
+
+pub fn set_session_archived(id: &str, archived: bool) -> Result<SessionMeta, String> {
+    let mut list = load_sessions_index();
+    let s = list
+        .iter_mut()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "session not found".to_string())?;
+    s.archived = archived;
+    s.updated_at = Utc::now();
+    let clone = s.clone();
+    save_sessions_index(&list)?;
+    Ok(clone)
+}
+
+pub fn set_session_pinned(id: &str, pinned: bool) -> Result<SessionMeta, String> {
+    let mut list = load_sessions_index();
+    let s = list
+        .iter_mut()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "session not found".to_string())?;
+    s.pinned = pinned;
+    // Do not bump updated_at — pin is organizational (same as project pin).
+    let clone = s.clone();
+    save_sessions_index(&list)?;
+    Ok(clone)
+}
+
+/// Bind (or clear) a session's project folder. Used to attach orphan / legacy
+/// chats to a project added later.
+pub fn set_session_project(id: &str, project_id: Option<String>) -> Result<SessionMeta, String> {
+    let pid = project_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(ref p) = pid {
+        // Ensure project exists in the projects list.
+        let projects = load_projects();
+        if !projects.iter().any(|x| x.id == *p) {
+            return Err(format!("project not found: {p}"));
+        }
+    }
+    let mut list = load_sessions_index();
+    let s = list
+        .iter_mut()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "session not found".to_string())?;
+    s.project_id = pid;
+    s.updated_at = Utc::now();
+    let clone = s.clone();
+    save_sessions_index(&list)?;
+    Ok(clone)
+}
+
+/// Archive every non-archived session under a project.
+pub fn archive_project_sessions(project_id: &str) -> Result<usize, String> {
+    let mut list = load_sessions_index();
+    let mut n = 0usize;
+    for s in list.iter_mut() {
+        if s.project_id.as_deref() == Some(project_id) && !s.archived {
+            s.archived = true;
+            s.updated_at = Utc::now();
+            n += 1;
+        }
+    }
+    save_sessions_index(&list)?;
+    Ok(n)
+}
+
+pub fn load_messages(session_id: &str) -> Vec<ChatMessageStored> {
+    read_json_recover(&session_dir(session_id).join("messages.json"))
+}
+
+pub fn save_messages(session_id: &str, messages: &[ChatMessageStored]) -> Result<(), String> {
+    write_json(&session_dir(session_id).join("messages.json"), &messages)
+}
+
+pub fn append_message(session_id: &str, msg: ChatMessageStored) -> Result<(), String> {
+    let mut msgs = load_messages(session_id);
+    // Upsert by id — never double-insert the same host message (stream complete +
+    // reconnect edge cases). Keeps journal length honest for multi-turn chats.
+    if let Some(slot) = msgs.iter_mut().find(|m| m.id == msg.id) {
+        *slot = msg;
+    } else {
+        msgs.push(msg);
+    }
+    save_messages(session_id, &msgs)
+}
+
+/// End index (exclusive) of the full turn for `user_prompt_index` (0-based).
+/// Turn = that user message + following non-user rows until the next user.
+pub fn end_index_through_user_prompt(
+    messages: &[ChatMessageStored],
+    user_prompt_index: u32,
+) -> Option<usize> {
+    let mut user_i = 0u32;
+    for (i, m) in messages.iter().enumerate() {
+        if m.role != "user" {
+            continue;
+        }
+        if user_i == user_prompt_index {
+            let mut j = i + 1;
+            while j < messages.len() && messages[j].role != "user" {
+                j += 1;
+            }
+            return Some(j);
+        }
+        user_i = user_i.saturating_add(1);
+    }
+    None
+}
+
+/// Keep messages through the end of the selected user turn (ACP `/rewind` semantics).
+pub fn truncate_through_user_prompt(
+    messages: &[ChatMessageStored],
+    user_prompt_index: u32,
+) -> Result<Vec<ChatMessageStored>, String> {
+    let end = end_index_through_user_prompt(messages, user_prompt_index)
+        .ok_or_else(|| format!("user prompt index out of range: {user_prompt_index}"))?;
+    Ok(messages[..end].to_vec())
+}
+
+/// Fork a session: new journal + meta, same project, no agent session id.
+/// `through_user_prompt_index`: when set, copy only through that user turn (inclusive).
+pub fn fork_session(
+    source_id: &str,
+    through_user_prompt_index: Option<u32>,
+    title: Option<String>,
+) -> Result<SessionMeta, String> {
+    let list = load_sessions_index();
+    let source = list
+        .iter()
+        .find(|s| s.id == source_id)
+        .ok_or_else(|| format!("session not found: {source_id}"))?
+        .clone();
+
+    let mut msgs = load_messages(source_id);
+    if let Some(idx) = through_user_prompt_index {
+        msgs = truncate_through_user_prompt(&msgs, idx)?;
+    }
+
+    let fork_title = title
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let base = source.title.trim();
+            let base = if base.is_empty() { "chat" } else { base };
+            if base.to_ascii_lowercase().starts_with("fork of ") {
+                base.to_string()
+            } else {
+                format!("Fork of {base}")
+            }
+        });
+
+    let mut meta = create_session(source.project_id.clone(), Some(fork_title), false)?;
+    // Inherit composer prefs from source so the fork feels continuous.
+    meta.model_id = source.model_id.clone();
+    meta.effort = source.effort.clone();
+    meta.mode = source.mode.clone();
+    meta.permission_policy = source.permission_policy.clone();
+    meta.updated_at = Utc::now();
+    update_session_meta(&meta)?;
+
+    // Remap ids so the fork is independent of the source journal ids.
+    let prefix = format!("fork-{}", &meta.id[..meta.id.len().min(8)]);
+    let forked: Vec<ChatMessageStored> = msgs
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut m)| {
+            m.id = format!("{prefix}-{i}");
+            m
+        })
+        .collect();
+    save_messages(&meta.id, &forked)?;
+    Ok(meta)
+}
+
+// ─── Automations (scheduled tasks shell) ───────────────────────────────────
+
+/// Host-side scheduled automation. The Rust scheduler owns execution while the
+/// app process is alive; this store is the source of truth for the list and its
+/// last durable outcome.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Automation {
+    pub id: String,
+    pub title: String,
+    /// Natural-language prompt / instructions for the agent when the task runs.
+    pub prompt: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Watch this `owner/name` repository instead of a local project.
+    ///
+    /// When set, the run sweeps the repository's open pull requests rather
+    /// than sending a fixed prompt. Empty for ordinary automations, so older
+    /// files load unchanged.
+    #[serde(default)]
+    pub repo: String,
+    pub project_id: Option<String>,
+    pub model_id: Option<String>,
+    pub effort: Option<String>,
+    /// `daily` | `weekly` | `weekdays` | `once`
+    #[serde(default = "default_frequency")]
+    pub frequency: String,
+    /// Local wall-clock time `HH:MM` (24h).
+    #[serde(default = "default_time")]
+    pub time: String,
+    /// For `weekly`: 0=Sun … 6=Sat (JS Date convention).
+    #[serde(default)]
+    pub weekdays: Vec<u8>,
+    /// `all` | `failures` | `none`
+    #[serde(default = "default_notify")]
+    pub notify: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<DateTime<Utc>>,
+    /// True when the most recent run was caught up after its scheduled slot.
+    #[serde(default)]
+    pub last_run_late: bool,
+    /// Sanitized detail from the most recent failed run, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_error: Option<String>,
+    /// Timestamp of the most recent failed run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_error_at: Option<DateTime<Utc>>,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_frequency() -> String {
+    "daily".into()
+}
+fn default_time() -> String {
+    "09:00".into()
+}
+fn default_notify() -> String {
+    "all".into()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationInput {
+    pub title: String,
+    pub prompt: String,
+    pub enabled: Option<bool>,
+    /// `owner/name` to sweep instead of a local project (see [`Automation`]).
+    pub repo: Option<String>,
+    pub project_id: Option<String>,
+    pub model_id: Option<String>,
+    pub effort: Option<String>,
+    pub frequency: Option<String>,
+    pub time: Option<String>,
+    pub weekdays: Option<Vec<u8>>,
+    pub notify: Option<String>,
+    pub next_run_at: Option<DateTime<Utc>>,
+}
+
+pub fn load_automations() -> Vec<Automation> {
+    let _ = ensure_app_dirs();
+    let mut list: Vec<Automation> = read_json(&automations_file());
+    list.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
+    list
+}
+
+pub fn save_automations(list: &[Automation]) -> Result<(), String> {
+    let _ = ensure_app_dirs();
+    write_json(&automations_file(), &list)
+}
+
+pub fn create_automation(input: AutomationInput) -> Result<Automation, String> {
+    let title = input.title.trim().to_string();
+    if title.is_empty() {
+        return Err("title empty".into());
+    }
+    let prompt = input.prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err("prompt empty".into());
+    }
+    let now = Utc::now();
+    let auto = Automation {
+        id: Uuid::new_v4().to_string(),
+        title,
+        prompt,
+        enabled: input.enabled.unwrap_or(true),
+        repo: input.repo.unwrap_or_default().trim().to_string(),
+        project_id: input.project_id,
+        model_id: input.model_id,
+        effort: input.effort,
+        frequency: input
+            .frequency
+            .unwrap_or_else(default_frequency)
+            .trim()
+            .to_string(),
+        time: input.time.unwrap_or_else(default_time).trim().to_string(),
+        weekdays: input.weekdays.unwrap_or_default(),
+        notify: input
+            .notify
+            .unwrap_or_else(default_notify)
+            .trim()
+            .to_string(),
+        created_at: now,
+        updated_at: now,
+        last_run_at: None,
+        next_run_at: input.next_run_at,
+        last_run_late: false,
+        last_run_error: None,
+        last_run_error_at: None,
+    };
+    let mut list = load_automations();
+    list.insert(0, auto.clone());
+    save_automations(&list)?;
+    Ok(auto)
+}
+
+pub fn update_automation(id: &str, input: AutomationInput) -> Result<Automation, String> {
+    let mut list = load_automations();
+    let auto = list
+        .iter_mut()
+        .find(|a| a.id == id)
+        .ok_or_else(|| "automation not found".to_string())?;
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err("title empty".into());
+    }
+    let prompt = input.prompt.trim();
+    if prompt.is_empty() {
+        return Err("prompt empty".into());
+    }
+    auto.title = title.to_string();
+    auto.prompt = prompt.to_string();
+    if let Some(e) = input.enabled {
+        auto.enabled = e;
+    }
+    if let Some(r) = input.repo {
+        auto.repo = r.trim().to_string();
+    }
+    auto.project_id = input.project_id;
+    auto.model_id = input.model_id;
+    auto.effort = input.effort;
+    if let Some(f) = input.frequency {
+        auto.frequency = f.trim().to_string();
+    }
+    if let Some(t) = input.time {
+        auto.time = t.trim().to_string();
+    }
+    if let Some(w) = input.weekdays {
+        auto.weekdays = w;
+    }
+    if let Some(n) = input.notify {
+        auto.notify = n.trim().to_string();
+    }
+    if input.next_run_at.is_some() {
+        auto.next_run_at = input.next_run_at;
+    }
+    auto.updated_at = Utc::now();
+    let clone = auto.clone();
+    save_automations(&list)?;
+    Ok(clone)
+}
+
+pub fn set_automation_enabled(id: &str, enabled: bool) -> Result<Automation, String> {
+    let mut list = load_automations();
+    let auto = list
+        .iter_mut()
+        .find(|a| a.id == id)
+        .ok_or_else(|| "automation not found".to_string())?;
+    auto.enabled = enabled;
+    auto.updated_at = Utc::now();
+    let clone = auto.clone();
+    save_automations(&list)?;
+    Ok(clone)
+}
+
+pub fn mark_automation_run(
+    id: &str,
+    last_run_at: DateTime<Utc>,
+    next_run_at: Option<DateTime<Utc>>,
+    ran_late: bool,
+) -> Result<Automation, String> {
+    let mut list = load_automations();
+    let auto = list
+        .iter_mut()
+        .find(|a| a.id == id)
+        .ok_or_else(|| "automation not found".to_string())?;
+    auto.last_run_at = Some(last_run_at);
+    auto.next_run_at = next_run_at;
+    auto.last_run_late = ran_late;
+    auto.last_run_error = None;
+    auto.last_run_error_at = None;
+    auto.updated_at = Utc::now();
+    let clone = auto.clone();
+    save_automations(&list)?;
+    Ok(clone)
+}
+
+/// Persist a failed scheduled attempt and advance its cursor.
+///
+/// A failure must consume the due slot: leaving `next_run_at` untouched makes
+/// the host scheduler retry the same automation on every 30-second tick. One-
+/// shot automations are paused after their single attempt so the user can
+/// inspect the error and use the existing "Run now" action deliberately.
+pub fn mark_automation_failure(
+    id: &str,
+    attempted_at: DateTime<Utc>,
+    next_run_at: Option<DateTime<Utc>>,
+    ran_late: bool,
+    error: &str,
+    disable_after_failure: bool,
+) -> Result<Automation, String> {
+    let mut list = load_automations();
+    let auto = list
+        .iter_mut()
+        .find(|a| a.id == id)
+        .ok_or_else(|| "automation not found".to_string())?;
+    let detail = redact_text(error)
+        .trim()
+        .chars()
+        .take(600)
+        .collect::<String>();
+    auto.last_run_at = Some(attempted_at);
+    auto.next_run_at = next_run_at;
+    auto.last_run_late = ran_late;
+    auto.last_run_error = Some(if detail.is_empty() {
+        "scheduled run failed".into()
+    } else {
+        detail
+    });
+    auto.last_run_error_at = Some(attempted_at);
+    if disable_after_failure {
+        auto.enabled = false;
+    }
+    auto.updated_at = Utc::now();
+    let clone = auto.clone();
+    save_automations(&list)?;
+    Ok(clone)
+}
+
+/// Update the latest automation summary after the owned session reaches a
+/// terminal state. The append-only run ledger remains the detailed source of
+/// truth; this keeps the existing Automations list accurate as well.
+pub fn mark_automation_run_outcome(
+    id: &str,
+    attempted_at: DateTime<Utc>,
+    status: &str,
+    error: Option<&str>,
+) -> Result<Automation, String> {
+    let mut list = load_automations();
+    let auto = list
+        .iter_mut()
+        .find(|a| a.id == id)
+        .ok_or_else(|| "automation not found".to_string())?;
+    let is_latest = auto
+        .last_run_at
+        .is_none_or(|last_run| attempted_at >= last_run);
+    if is_latest {
+        auto.last_run_at = Some(attempted_at);
+        if status == "completed" {
+            auto.last_run_error = None;
+            auto.last_run_error_at = None;
+        } else {
+            let detail = redact_text(error.unwrap_or("scheduled run did not complete"))
+                .trim()
+                .chars()
+                .take(600)
+                .collect::<String>();
+            auto.last_run_error = Some(if detail.is_empty() {
+                "scheduled run did not complete".into()
+            } else {
+                detail
+            });
+            auto.last_run_error_at = Some(attempted_at);
+        }
+    }
+    auto.updated_at = Utc::now();
+    let clone = auto.clone();
+    save_automations(&list)?;
+    Ok(clone)
+}
+
+/// Apply automation-specific model/effort without changing global defaults.
+pub fn set_session_agent_prefs(
+    session_id: &str,
+    model_id: Option<&str>,
+    effort: Option<&str>,
+) -> Result<(), String> {
+    let mut list = load_sessions_index();
+    let session = list
+        .iter_mut()
+        .find(|s| s.id == session_id)
+        .ok_or_else(|| "session not found".to_string())?;
+    if let Some(model) = model_id.filter(|v| !v.trim().is_empty()) {
+        session.model_id = Some(model.trim().to_string());
+    }
+    if let Some(value) = effort.filter(|v| !v.trim().is_empty()) {
+        session.effort = Some(value.trim().to_string());
+    }
+    session.updated_at = Utc::now();
+    save_sessions_index(&list)
+}
+
+/// Remember the remote workspace/worktree used by a chat.
+///
+/// The value is intentionally lexical. The SSH bridge validates it again at
+/// command execution time, and the remote runtime validates the configured
+/// host separately. Empty input clears the override and returns to the
+/// runtime's configured root on the next connection.
+pub fn set_session_remote_cwd(id: &str, remote_cwd: Option<String>) -> Result<SessionMeta, String> {
+    let cwd = remote_cwd
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(value) = cwd.as_deref() {
+        if value.len() > 4_096 || value.contains(['\0', '\n', '\r']) || value.starts_with('-') {
+            return Err("invalid remote workspace path".into());
+        }
+    }
+    let mut list = load_sessions_index();
+    let session = list
+        .iter_mut()
+        .find(|session| session.id == id)
+        .ok_or_else(|| "session not found".to_string())?;
+    session.remote_cwd = cwd;
+    session.updated_at = Utc::now();
+    let clone = session.clone();
+    save_sessions_index(&list)?;
+    Ok(clone)
+}
+
+pub fn delete_automation(id: &str) -> Result<(), String> {
+    let mut list = load_automations();
+    let before = list.len();
+    list.retain(|a| a.id != id);
+    if list.len() == before {
+        return Err("automation not found".into());
+    }
+    save_automations(&list)
+}
+
+/// Load app secrets (API keys). Backend-agnostic: OS keychain preferred, file fallback.
+/// See [`crate::secrets`] for migration and storage details. Callers must not log values.
+pub fn load_secrets() -> SecretsFile {
+    crate::secrets::load_secrets()
+}
+
+/// Redact secrets from a string for logs/Doctor export.
+pub fn redact_text(input: &str) -> String {
+    let mut out = input.to_string();
+    let secrets = load_secrets();
+    for key in [
+        secrets.official_api_key.as_deref(),
+        secrets.relay_api_key.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if key.len() >= 8 {
+            out = out.replace(key, "[REDACTED]");
+        }
+    }
+    // common token scrubbing without regex crate
+    let mut cleaned = String::with_capacity(out.len());
+    for word in out.split_whitespace() {
+        if word.len() > 20
+            && (word.starts_with("sk-") || word.starts_with("xai-") || word.contains("Bearer"))
+        {
+            cleaned.push_str("[REDACTED]");
+        } else {
+            cleaned.push_str(word);
+        }
+        cleaned.push(' ');
+    }
+    cleaned
+}
+
+fn global_prefs(settings: &AppSettings) -> (String, String, String, String) {
+    (
+        settings
+            .model_id
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "auto".into()),
+        settings
+            .effort
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "medium".into()),
+        if settings.mode.trim().is_empty() {
+            "agent".into()
+        } else {
+            settings.mode.clone()
+        },
+        if settings.permission_policy.trim().is_empty() {
+            "ask".into()
+        } else {
+            settings.permission_policy.clone()
+        },
+    )
+}
+
+/// Select the model override that belongs to the active product mode.
+///
+/// `review` is intentionally separate from `plan`: PR review is a quality
+/// gate, while planning is a different kind of context and often benefits
+/// from a cheaper model. Empty overrides inherit the ordinary project model.
+fn project_model_for_mode(project: &Project, mode: &str, inherited: String) -> String {
+    let override_id = match mode.trim().to_ascii_lowercase().as_str() {
+        "plan" => project.plan_model_id.clone(),
+        "review" => project.review_model_id.clone(),
+        _ => project.model_id.clone(),
+    };
+    override_id
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(inherited)
+}
+
+/// Resolve effective composer prefs for the active project/session + configured scope.
+///
+/// Model / effort / mode follow `composer_prefs_scope`.
+/// Permission always cascades session → project → global (L10), and untrusted
+/// projects force Ask regardless of stored tiers.
+pub fn resolve_composer_prefs(project_id: Option<&str>, session_id: Option<&str>) -> ComposerPrefs {
+    use crate::permission::effective_permission_policy;
+
+    let settings = load_settings();
+    let scope = ComposerPrefsScope::parse(&settings.composer_prefs_scope);
+    let (g_model, g_effort, g_mode, g_policy) = global_prefs(&settings);
+
+    let sess = session_id.and_then(|id| load_sessions_index().into_iter().find(|s| s.id == id));
+    let proj = sess
+        .as_ref()
+        .and_then(|s| s.project_id.as_deref())
+        .or(project_id)
+        .and_then(|id| load_projects().into_iter().find(|p| p.id == id));
+
+    // Permission: always cascade (independent of model/effort memory scope).
+    let permission_policy = effective_permission_policy(
+        &g_policy,
+        proj.as_ref().map(|p| p.trusted),
+        proj.as_ref().and_then(|p| p.permission_policy.as_deref()),
+        sess.as_ref().and_then(|s| s.permission_policy.as_deref()),
+    )
+    .as_str()
+    .to_string();
+
+    match scope {
+        ComposerPrefsScope::Global => ComposerPrefs {
+            model_id: g_model,
+            effort: g_effort,
+            mode: g_mode,
+            permission_policy,
+            scope: scope.as_str().into(),
+            source: "global".into(),
+        },
+        ComposerPrefsScope::Project => {
+            if let Some(p) = proj {
+                ComposerPrefs {
+                    model_id: project_model_for_mode(&p, &g_mode, g_model),
+                    effort: p.effort.filter(|s| !s.is_empty()).unwrap_or(g_effort),
+                    mode: p.mode.filter(|s| !s.is_empty()).unwrap_or(g_mode),
+                    permission_policy,
+                    scope: scope.as_str().into(),
+                    source: "project".into(),
+                }
+            } else {
+                ComposerPrefs {
+                    model_id: g_model,
+                    effort: g_effort,
+                    mode: g_mode,
+                    permission_policy,
+                    scope: scope.as_str().into(),
+                    source: "global".into(),
+                }
+            }
+        }
+        ComposerPrefsScope::Session => {
+            let p_model = proj
+                .as_ref()
+                .map(|p| project_model_for_mode(p, &g_mode, g_model.clone()))
+                .unwrap_or_else(|| g_model.clone());
+            let p_effort = proj
+                .as_ref()
+                .and_then(|p| p.effort.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(g_effort.clone());
+            let p_mode = proj
+                .as_ref()
+                .and_then(|p| p.mode.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(g_mode.clone());
+
+            if let Some(s) = sess {
+                ComposerPrefs {
+                    model_id: s.model_id.filter(|x| !x.is_empty()).unwrap_or(p_model),
+                    effort: s.effort.filter(|x| !x.is_empty()).unwrap_or(p_effort),
+                    mode: s.mode.filter(|x| !x.is_empty()).unwrap_or(p_mode),
+                    permission_policy,
+                    scope: scope.as_str().into(),
+                    source: "session".into(),
+                }
+            } else {
+                ComposerPrefs {
+                    model_id: p_model,
+                    effort: p_effort,
+                    mode: p_mode,
+                    permission_policy,
+                    scope: scope.as_str().into(),
+                    source: if proj.is_some() { "project" } else { "global" }.into(),
+                }
+            }
+        }
+    }
+}
+
+/// Persist a partial composer prefs update at the configured scope.
+pub fn save_composer_prefs(
+    project_id: Option<&str>,
+    session_id: Option<&str>,
+    model_id: Option<String>,
+    effort: Option<String>,
+    mode: Option<String>,
+    permission_policy: Option<String>,
+) -> Result<ComposerPrefs, String> {
+    let settings = load_settings();
+    let scope = ComposerPrefsScope::parse(&settings.composer_prefs_scope);
+
+    match scope {
+        ComposerPrefsScope::Global => {
+            let mut s = settings;
+            if let Some(v) = model_id {
+                s.model_id = Some(v);
+            }
+            if let Some(v) = effort {
+                s.effort = Some(v);
+            }
+            if let Some(v) = mode {
+                s.mode = v;
+            }
+            if let Some(v) = permission_policy {
+                s.permission_policy = v;
+            }
+            save_settings(&s)?;
+        }
+        ComposerPrefsScope::Project => {
+            let pid = project_id.filter(|s| !s.is_empty());
+            if let Some(pid) = pid {
+                let mut list = load_projects();
+                if let Some(p) = list.iter_mut().find(|p| p.id == pid) {
+                    if let Some(v) = model_id.clone() {
+                        p.model_id = Some(v);
+                    }
+                    if let Some(v) = effort.clone() {
+                        p.effort = Some(v);
+                    }
+                    if let Some(v) = mode.clone() {
+                        p.mode = Some(v);
+                    }
+                    if let Some(v) = permission_policy.clone() {
+                        p.permission_policy = Some(v);
+                    }
+                    save_projects(&list)?;
+                }
+            }
+            // Always mirror to global so orphan UIs / new projects still have a default.
+            let mut s = load_settings();
+            if let Some(v) = model_id {
+                s.model_id = Some(v);
+            }
+            if let Some(v) = effort {
+                s.effort = Some(v);
+            }
+            if let Some(v) = mode {
+                s.mode = v;
+            }
+            if let Some(v) = permission_policy {
+                s.permission_policy = v;
+            }
+            save_settings(&s)?;
+        }
+        ComposerPrefsScope::Session => {
+            let sid = session_id.filter(|s| !s.is_empty());
+            if let Some(sid) = sid {
+                let mut list = load_sessions_index();
+                if let Some(sess) = list.iter_mut().find(|s| s.id == sid) {
+                    if let Some(v) = model_id {
+                        sess.model_id = Some(v);
+                    }
+                    if let Some(v) = effort {
+                        sess.effort = Some(v);
+                    }
+                    if let Some(v) = mode {
+                        sess.mode = Some(v);
+                    }
+                    if let Some(v) = permission_policy {
+                        sess.permission_policy = Some(v);
+                    }
+                    sess.updated_at = Utc::now();
+                    save_sessions_index(&list)?;
+                } else {
+                    // No session row yet — fall back to global so the chip still sticks.
+                    let mut s = load_settings();
+                    if let Some(v) = model_id {
+                        s.model_id = Some(v);
+                    }
+                    if let Some(v) = effort {
+                        s.effort = Some(v);
+                    }
+                    if let Some(v) = mode {
+                        s.mode = v;
+                    }
+                    if let Some(v) = permission_policy {
+                        s.permission_policy = v;
+                    }
+                    save_settings(&s)?;
+                }
+            } else {
+                let mut s = load_settings();
+                if let Some(v) = model_id {
+                    s.model_id = Some(v);
+                }
+                if let Some(v) = effort {
+                    s.effort = Some(v);
+                }
+                if let Some(v) = mode {
+                    s.mode = v;
+                }
+                if let Some(v) = permission_policy {
+                    s.permission_policy = v;
+                }
+                save_settings(&s)?;
+            }
+        }
+    }
+
+    Ok(resolve_composer_prefs(project_id, session_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn redact_scrubs_long_tokenish() {
+        let s = "header Bearer sk-abcdefghijklmnopqrstuvwxyz123456 tail";
+        let r = redact_text(s);
+        assert!(
+            !r.contains("sk-abcdefghijklmnopqrstuvwxyz123456")
+                || r.contains("REDACTED")
+                || r.contains("sk-")
+        );
+        assert!(!r.is_empty());
+    }
+
+    #[test]
+    fn take_store_quarantine_is_one_shot() {
+        // Seed the static as if a corrupt file was recovered.
+        {
+            let mut g = LAST_STORE_QUARANTINE.lock().unwrap();
+            *g = Some("/tmp/fake-corrupt-store.json".into());
+        }
+        let first = take_store_quarantine();
+        assert_eq!(first.as_deref(), Some("/tmp/fake-corrupt-store.json"));
+        assert!(take_store_quarantine().is_none());
+    }
+
+    #[test]
+    fn default_settings_independent_mode() {
+        let s = AppSettings::default();
+        assert_eq!(s.session_data_mode, "independent");
+        assert_eq!(s.permission_policy, "ask");
+        assert_eq!(s.theme, "dark");
+        assert_eq!(s.locale, "en");
+        assert_eq!(s.max_concurrent_agents, 3);
+        assert_eq!(s.agent_idle_minutes, 30);
+        assert_eq!(s.stream_stall_seconds, 120);
+        assert_eq!(s.sandbox_profile, "off");
+        assert!(!s.experimental_memory);
+        assert_eq!(s.max_agent_turns, None);
+        assert!(!s.disable_web_search);
+        assert!(s.plan_enabled);
+        assert!(s.subagents_enabled);
+        assert_eq!(s.preferred_agent, "");
+        assert!(!s.use_leader);
+    }
+
+    /// Minimal legacy settings JSON (pre-batch fields omitted).
+    fn legacy_settings_json() -> &'static str {
+        r#"{
+            "theme": "dark",
+            "locale": "en",
+            "sessionDataMode": "independent",
+            "manualCliPath": null,
+            "permissionPolicy": "ask",
+            "modelId": null,
+            "effort": "medium",
+            "mode": "agent",
+            "onboardingDone": true,
+            "setupSkipped": false
+        }"#
+    }
+
+    #[test]
+    fn sandbox_profile_defaults_when_missing_from_json() {
+        let s: AppSettings = serde_json::from_str(legacy_settings_json()).expect("deserialize");
+        assert_eq!(s.sandbox_profile, "off");
+    }
+
+    #[test]
+    fn max_agent_turns_defaults_when_missing_from_json() {
+        let s: AppSettings = serde_json::from_str(legacy_settings_json()).expect("deserialize");
+        assert_eq!(s.max_agent_turns, None);
+    }
+
+    #[test]
+    fn preferred_agent_defaults_when_missing_from_json() {
+        let s: AppSettings = serde_json::from_str(legacy_settings_json()).expect("deserialize");
+        assert_eq!(s.preferred_agent, "");
+    }
+
+    #[test]
+    fn use_leader_defaults_when_missing_from_json() {
+        let s: AppSettings = serde_json::from_str(legacy_settings_json()).expect("deserialize");
+        assert!(!s.use_leader);
+    }
+
+    #[test]
+    fn disable_web_search_defaults_when_missing_from_json() {
+        let s: AppSettings = serde_json::from_str(legacy_settings_json()).expect("deserialize");
+        assert!(!s.disable_web_search);
+    }
+
+    #[test]
+    fn plan_enabled_defaults_true_when_missing_from_json() {
+        let s: AppSettings = serde_json::from_str(legacy_settings_json()).expect("deserialize");
+        assert!(s.plan_enabled);
+    }
+
+    #[test]
+    fn subagents_enabled_defaults_true_when_missing_from_json() {
+        let s: AppSettings = serde_json::from_str(legacy_settings_json()).expect("deserialize");
+        assert!(s.subagents_enabled);
+    }
+
+    #[test]
+    fn experimental_memory_defaults_false_when_missing_from_json() {
+        let s: AppSettings = serde_json::from_str(legacy_settings_json()).expect("deserialize");
+        assert!(!s.experimental_memory);
+    }
+
+    fn sample_session(id: &str, pinned: bool, updated: DateTime<Utc>) -> SessionMeta {
+        SessionMeta {
+            id: id.into(),
+            project_id: None,
+            title: id.into(),
+            remote_cwd: None,
+            agent_session_id: None,
+            created_at: updated,
+            updated_at: updated,
+            model_id: None,
+            archived: false,
+            pinned,
+            effort: None,
+            mode: None,
+            permission_policy: None,
+            scheduled: false,
+            scheduled_automation_id: None,
+            active_automation_run_id: None,
+        }
+    }
+
+    #[test]
+    fn sessions_sort_pinned_first_then_updated_at() {
+        let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap();
+        let mut list = vec![
+            sample_session("unpinned-mid", false, t2),
+            sample_session("pinned-old", true, t1),
+            sample_session("unpinned-new", false, t3),
+            sample_session("pinned-new", true, t3),
+        ];
+        sort_sessions_by_pin_then_updated(&mut list);
+        let ids: Vec<&str> = list.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["pinned-new", "pinned-old", "unpinned-new", "unpinned-mid"]
+        );
+    }
+
+    #[test]
+    fn session_meta_pinned_defaults_false_on_deserialize() {
+        let raw = r#"{
+            "id":"x","title":"t","createdAt":"2024-01-01T00:00:00Z",
+            "updatedAt":"2024-01-01T00:00:00Z"
+        }"#;
+        let m: SessionMeta = serde_json::from_str(raw).expect("deserialize legacy session");
+        assert!(!m.pinned);
+        assert!(!m.archived);
+        assert!(m.remote_cwd.is_none());
+    }
+
+    #[test]
+    fn session_meta_remote_cwd_round_trips() {
+        let updated = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let mut session = sample_session("remote", false, updated);
+        session.remote_cwd = Some("/srv/pi/worktree".into());
+        let encoded = serde_json::to_string(&session).expect("serialize session");
+        let decoded: SessionMeta = serde_json::from_str(&encoded).expect("deserialize session");
+        assert_eq!(decoded.remote_cwd.as_deref(), Some("/srv/pi/worktree"));
+    }
+
+    #[test]
+    fn session_meta_automation_fields_default_for_legacy_rows() {
+        let raw = r#"{
+            "id":"x","title":"scheduled","scheduled":true,
+            "createdAt":"2024-01-01T00:00:00Z",
+            "updatedAt":"2024-01-01T00:00:00Z"
+        }"#;
+        let session: SessionMeta = serde_json::from_str(raw).expect("deserialize legacy session");
+        assert!(session.scheduled);
+        assert!(session.scheduled_automation_id.is_none());
+        assert!(session.active_automation_run_id.is_none());
+    }
+
+    #[test]
+    fn automation_failure_fields_default_for_legacy_rows() {
+        let raw = r#"{
+            "id":"a","title":"t","prompt":"p","enabled":true,
+            "projectId":null,"modelId":null,"effort":null,
+            "createdAt":"2024-01-01T00:00:00Z","updatedAt":"2024-01-01T00:00:00Z",
+            "lastRunAt":null,"nextRunAt":null
+        }"#;
+        let row: Automation = serde_json::from_str(raw).expect("deserialize legacy automation");
+        assert!(row.last_run_error.is_none());
+        assert!(row.last_run_error_at.is_none());
+    }
+}

@@ -1,0 +1,266 @@
+/**
+ * Code preview chrome + Atom One Dark / One Light dual themes
+ * (highlight.js atom-one-* palette, scoped under .rp-code--dark / --light).
+ */
+
+.rp-code {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  border-radius: 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.rp-code__scroll {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  align-items: flex-start;
+}
+
+.rp-code__gutter {
+  flex: 0 0 auto;
+  min-width: 2.75rem;
+  padding: 14px 0 20px;
+  text-align: right;
+  -webkit-user-select: none;
+  user-select: none;
+  color: var(--text-tertiary);
+  border-right: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-code, var(--bg-hover)) 70%, transparent);
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.rp-code__ln {
+  display: block;
+  padding: 0 10px 0 8px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.rp-code__pre {
+  flex: 1;
+  margin: 0;
+  padding: 14px 16px 20px 14px;
+  min-width: 0;
+  overflow: visible;
+  background: transparent !important;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.rp-code__pre code.hljs {
+  display: block;
+  padding: 0 !important;
+  background: transparent !important;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  tab-size: 2;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.rp-code__footer {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-hover) 50%, transparent);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ── Atom One Dark ───────────────────────────────────────────────────────── */
+/* Palette from highlight.js atom-one-dark.css */
+
+.rp-code--dark,
+.rp-code--dark .rp-code__scroll {
+  background: #282c34;
+}
+
+.rp-code--dark .rp-code__gutter {
+  background: #21252b;
+  color: #5c6370;
+  border-right-color: #181a1f;
+}
+
+.rp-code--dark .hljs {
+  color: #abb2bf;
+  background: transparent;
+}
+
+.rp-code--dark .hljs-comment,
+.rp-code--dark .hljs-quote {
+  color: #5c6370;
+  font-style: italic;
+}
+
+.rp-code--dark .hljs-doctag,
+.rp-code--dark .hljs-keyword,
+.rp-code--dark .hljs-formula {
+  color: #c678dd;
+}
+
+.rp-code--dark .hljs-section,
+.rp-code--dark .hljs-name,
+.rp-code--dark .hljs-selector-tag,
+.rp-code--dark .hljs-deletion,
+.rp-code--dark .hljs-subst {
+  color: #e06c75;
+}
+
+.rp-code--dark .hljs-literal {
+  color: #56b6c2;
+}
+
+.rp-code--dark .hljs-string,
+.rp-code--dark .hljs-regexp,
+.rp-code--dark .hljs-addition,
+.rp-code--dark .hljs-attribute,
+.rp-code--dark .hljs-meta .hljs-string {
+  color: #98c379;
+}
+
+.rp-code--dark .hljs-attr,
+.rp-code--dark .hljs-variable,
+.rp-code--dark .hljs-template-variable,
+.rp-code--dark .hljs-type,
+.rp-code--dark .hljs-selector-class,
+.rp-code--dark .hljs-selector-attr,
+.rp-code--dark .hljs-selector-pseudo,
+.rp-code--dark .hljs-number {
+  color: #d19a66;
+}
+
+.rp-code--dark .hljs-symbol,
+.rp-code--dark .hljs-bullet,
+.rp-code--dark .hljs-link,
+.rp-code--dark .hljs-meta,
+.rp-code--dark .hljs-selector-id,
+.rp-code--dark .hljs-title {
+  color: #61aeee;
+}
+
+.rp-code--dark .hljs-built_in,
+.rp-code--dark .hljs-title.class_,
+.rp-code--dark .hljs-class .hljs-title {
+  color: #e6c07b;
+}
+
+.rp-code--dark .hljs-emphasis {
+  font-style: italic;
+}
+
+.rp-code--dark .hljs-strong {
+  font-weight: bold;
+}
+
+.rp-code--dark .hljs-link {
+  text-decoration: underline;
+}
+
+/* ── Atom One Light ──────────────────────────────────────────────────────── */
+/* Palette from highlight.js atom-one-light.css */
+
+.rp-code--light,
+.rp-code--light .rp-code__scroll {
+  background: #fafafa;
+}
+
+.rp-code--light .rp-code__gutter {
+  background: #f0f0f0;
+  color: #9d9d9f;
+  border-right-color: #e5e5e6;
+}
+
+.rp-code--light .hljs {
+  color: #383a42;
+  background: transparent;
+}
+
+.rp-code--light .hljs-comment,
+.rp-code--light .hljs-quote {
+  color: #a0a1a7;
+  font-style: italic;
+}
+
+.rp-code--light .hljs-doctag,
+.rp-code--light .hljs-keyword,
+.rp-code--light .hljs-formula {
+  color: #a626a4;
+}
+
+.rp-code--light .hljs-section,
+.rp-code--light .hljs-name,
+.rp-code--light .hljs-selector-tag,
+.rp-code--light .hljs-deletion,
+.rp-code--light .hljs-subst {
+  color: #e45649;
+}
+
+.rp-code--light .hljs-literal {
+  color: #0184bb;
+}
+
+.rp-code--light .hljs-string,
+.rp-code--light .hljs-regexp,
+.rp-code--light .hljs-addition,
+.rp-code--light .hljs-attribute,
+.rp-code--light .hljs-meta .hljs-string {
+  color: #50a14f;
+}
+
+.rp-code--light .hljs-attr,
+.rp-code--light .hljs-variable,
+.rp-code--light .hljs-template-variable,
+.rp-code--light .hljs-type,
+.rp-code--light .hljs-selector-class,
+.rp-code--light .hljs-selector-attr,
+.rp-code--light .hljs-selector-pseudo,
+.rp-code--light .hljs-number {
+  color: #986801;
+}
+
+.rp-code--light .hljs-symbol,
+.rp-code--light .hljs-bullet,
+.rp-code--light .hljs-link,
+.rp-code--light .hljs-meta,
+.rp-code--light .hljs-selector-id,
+.rp-code--light .hljs-title {
+  color: #4078f2;
+}
+
+.rp-code--light .hljs-built_in,
+.rp-code--light .hljs-title.class_,
+.rp-code--light .hljs-class .hljs-title {
+  color: #c18401;
+}
+
+.rp-code--light .hljs-emphasis {
+  font-style: italic;
+}
+
+.rp-code--light .hljs-strong {
+  font-weight: bold;
+}
+
+.rp-code--light .hljs-link {
+  text-decoration: underline;
+}

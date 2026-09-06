@@ -1,0 +1,9 @@
+{
+  "commit": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+  "arch": "x64",
+  "platform": "linux",
+  "compiler": "go version go1.27.1 linux/amd64",
+  "version": "landrun version 0.1.18",
+  "sha256": "b3e0e36d8d47b22071bfa9f192aa39fc237e2b33224de2c3d7f79bcfc0e0162f",
+  "modules": "/workspace/pi-agent-loop/runtime/bin/landrun: go1.27.1\n\tpath\tgithub.com/zouuup/landrun/cmd/landrun\n\tmod\tgithub.com/zouuup/landrun\t(devel)\t\n\tdep\tgithub.com/landlock-lsm/go-landlock\tv0.9.0\th1:2q8G8yx9Hsd5bV+R6PJfgQl0zszNxC8KO+SIqGwfxlw=\n\tdep\tgithub.com/urfave/cli/v3\tv3.6.2\th1:lQuqiPrZ1cIz8hz+HcrG0TNZFxU70dPZ3Yl+pSrH9A8=\n\tdep\tgolang.org/x/sys\tv0.40.0\th1:DBZZqJ2Rkml6QMQsZywtnjnnGvHza6BTfYFWY9kjEWQ=\n\tdep\tkernel.org/pub/linux/libs/security/libcap/psx\tv1.2.77\th1:Z06sMOzc0GNCwp6efaVrIrz4ywGJ1v+DP0pjVkOfDuA=\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-trimpath=true\n\tbuild\tDefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlstrictcolons=0,x509sha256skid=0,x509sslcertoverrideplatform=0\n\tbuild\tCGO_ENABLED=1\n\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n\tbuild\tGOAMD64=v1"
+}

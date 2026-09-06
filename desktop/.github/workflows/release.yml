@@ -1,0 +1,179 @@
+# Build & publish desktop installers:
+#   macOS ARM / Intel (.dmg)
+#   Windows x64 NSIS setup + portable zip
+#   Linux x64 AppImage / .deb / .rpm (Ubuntu/Debian + Fedora/RHEL family)
+# Trigger: push tag v*  (e.g. v0.1.1)  or manual workflow_dispatch.
+#
+# Prerequisites (repo Settings → Actions → General → Workflow permissions):
+#   - Read and write permissions (so the job can create/update Releases)
+#
+# Optional signing secrets (unsigned builds still work; macOS may warn):
+#   - Apple: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+#            APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID  (see Tauri macOS signing docs)
+#   - Updater: TAURI_SIGNING_PRIVATE_KEY (+ PASSWORD when the key is encrypted)
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to rebuild (e.g. v0.1.0). Leave empty to use package version draft."
+        required: false
+        default: ""
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+            name: macOS-ARM64
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+            name: macOS-x64
+          - platform: windows-latest
+            args: ""
+            name: Windows-x64
+          - platform: ubuntu-22.04
+            args: ""
+            name: Linux-x64
+
+    runs-on: ${{ matrix.platform }}
+    name: Build ${{ matrix.name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Linux system deps (WebKit / GTK / RPM)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          # Use Ayatana only — libappindicator3-dev conflicts with libayatana-appindicator3-dev.
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libssl-dev \
+            rpm \
+            file
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          shared-key: ${{ matrix.name }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Release description = CHANGELOG.md section for this version (bilingual body).
+      # Fails the job if `## [X.Y.Z]` is missing — write changelog before tagging.
+      - name: Prepare release notes from CHANGELOG
+        id: changelog
+        shell: bash
+        env:
+          # Windows runners default to cp1252; bilingual CHANGELOG needs UTF-8 stdout.
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_TAG" ]]; then
+            VER="$INPUT_TAG"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VER="${{ github.ref_name }}"
+          else
+            VER="v$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+          fi
+          python3 scripts/changelog-for-release.py "$VER" | tee release-notes.md
+          # Multiline body for tauri-action `releaseBody` (no releaseBodyFile input).
+          {
+            echo "RELEASE_BODY<<PI_RELEASE_EOF"
+            cat release-notes.md
+            echo "PI_RELEASE_EOF"
+          } >> "$GITHUB_ENV"
+
+      # NOTE: Do NOT pass empty APPLE_* / TAURI_SIGNING_* secrets.
+      # Empty APPLE_CERTIFICATE makes `tauri build` try codesign import and fail with:
+      #   "failed to import keychain certificate"
+      # When you have real signing material, add those env vars back (only if non-empty).
+      - name: Build Tauri app & attach to GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          # Root package.json + src-tauri/ layout (create-tauri-app style)
+          projectPath: .
+          # Prefer the pushed git tag; fallback replaces __VERSION__ from tauri.conf.json
+          tagName: ${{ github.event.inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v__VERSION__' }}
+          releaseName: "Pi v__VERSION__"
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+          includeUpdaterJson: true
+
+      # Windows portable zip (no installer). WebView2 still from the system.
+      - name: Windows portable zip
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_TAG" ]]; then
+            TAG="$INPUT_TAG"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="v$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+          fi
+          bash scripts/package-windows-portable.sh "$TAG"
+
+  verify-update-manifest:
+    name: Verify published updater manifest
+    needs: publish
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate latest.json and every platform asset
+        run: node scripts/validate-update-manifest.mjs

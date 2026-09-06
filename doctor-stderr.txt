@@ -1,0 +1,2 @@
+ParseError: G:\: Unterminated string constant.  
+ G:/pi-agent-loop/pi-agent-loop/src/sandbox.ts:97:84

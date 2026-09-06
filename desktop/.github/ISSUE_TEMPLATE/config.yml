@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Pi documentation
+    url: https://pi.dev/docs/latest
+    about: Official Pi agent docs (runtime, packages, RPC)
+  - name: Pi on GitHub
+    url: https://github.com/earendil-works/pi
+    about: Pi coding agent source

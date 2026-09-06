@@ -1,0 +1,70 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies & build output
+node_modules
+dist
+dist-ssr
+dist-installers
+*.local
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+
+# Tauri / Rust
+src-tauri/target
+src-tauri/gen/schemas
+
+# Local runtime data & secrets
+*.db
+*.db-*
+.env
+.env.*
+*.pem
+*.p12
+*.key
+auth.json
+secrets.json
+config.local.*
+
+# Scratch / local experiments (not part of the published tree)
+.spike-proj
+.refs
+.codex/
+.tmp*/
+tmp/
+temp/
+.cache/
+.turbo/
+.eslintcache
+*.tsbuildinfo
+map.md
+icone/
+**/.DS_Store
+
+# Generated intermediate app-icon master (source is icon-source.png)
+src-tauri/icons/icon-squircle.png
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/Square*.png
+src-tauri/icons/StoreLogo.png
+
+# Local agent / IDE workspaces
+.claude/
+.agents/
+.opencode/

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Pi",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": true,
+        "transparent": true,
+        "center": true,
+        "shadow": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 16, "y": 18 }
+      }
+    ],
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "macOS": {
+      "signingIdentity": "-",
+      "infoPlist": "Info.plist"
+    }
+  }
+}

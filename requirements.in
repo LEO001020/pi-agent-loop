@@ -1,0 +1,4 @@
+# Optional programmatic accelerator. Scripts-only mode does not import these.
+ipykernel==7.3.0
+jupyter-client==8.10.0
+cloudpickle==3.1.2

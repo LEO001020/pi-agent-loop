@@ -1,0 +1,14 @@
+{
+  "date": "2026-08-01",
+  "target": "/Applications/Pi.app",
+  "healthScore": 90,
+  "issues": [
+    {"id": "QA-001", "title": "Release updater signing secret still external", "severity": "medium", "category": "release"},
+    {"id": "QA-002", "title": "Strict Clippy gate", "severity": "info", "category": "quality"},
+    {"id": "QA-003", "title": "Ad-hoc signed and not notarized", "severity": "medium", "category": "distribution"},
+    {"id": "QA-004", "title": "Provider model entitlement blocks round-trip", "severity": "medium", "category": "environment"},
+    {"id": "QA-005", "title": "Accessibility permission blocks pointer automation", "severity": "low", "category": "testability"},
+    {"id": "QA-006", "title": "Launch chunk remains above Vite advisory threshold", "severity": "low", "category": "performance"},
+    {"id": "QA-007", "title": "Full access visual warning is intentional", "severity": "info", "category": "permissions"}
+  ]
+}
